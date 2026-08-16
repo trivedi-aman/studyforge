@@ -818,41 +818,124 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   if (!textLayer) return;
   if (!textLayer.contains(range.startContainer) && !textLayer.contains(range.endContainer)) return;
 
-  const rawRects = Array.from(range.getClientRects()).filter(
-    (r) => r.width > 1 && r.height > 1
-  );
-  if (!rawRects.length) return;
-
   const pageRect = pageEl.getBoundingClientRect();
   const selectedText = sel.toString();
 
-  // ---------- Step 1: group rects by visual line ----------
-  // Use vertical MIDPOINT, not top edge — bold/italic runs have
-  // different top/bottom but the same center as surrounding text.
-  const rectsWithMid = rawRects.map((r) => ({
-    left: r.left,
-    top: r.top,
-    right: r.right,
-    bottom: r.bottom,
-    width: r.width,
-    height: r.height,
-    midY: r.top + r.height / 2,
-  }));
+  // ---------------------------------------------------------------
+  // Get all text-layer spans that intersect the selection.
+  // Every span in PDF.js's textLayer is one horizontal glyph run —
+  // we use ITS bounding rect (not getClientRects()) because that's
+  // guaranteed to be one clean rect per horizontal run.
+  // ---------------------------------------------------------------
+  const allSpans = Array.from(textLayer.querySelectorAll('span'));
+  const intersectingSpans = allSpans.filter((span) => {
+    // A span intersects the range if the range's boundaries touch it
+    const spanRange = document.createRange();
+    spanRange.selectNodeContents(span);
+    // Use compareBoundaryPoints to check overlap
+    // range.END_TO_START: (rangeEnd vs spanStart) — if range ends before span starts, no overlap
+    // range.START_TO_END: (rangeStart vs spanEnd) — if range starts after span ends, no overlap
+    const startsBeforeSpanEnd =
+      range.compareBoundaryPoints(Range.START_TO_END, spanRange) > 0;
+    const endsAfterSpanStart =
+      range.compareBoundaryPoints(Range.END_TO_START, spanRange) < 0;
+    return startsBeforeSpanEnd && endsAfterSpanStart;
+  });
 
-  // Sort by vertical position then horizontal
-  rectsWithMid.sort((a, b) => a.midY - b.midY || a.left - b.left);
+  if (!intersectingSpans.length) {
+    // Fallback for the unusual case where the range is fully inside
+    // one text node — use range.getClientRects() and just take the first.
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    if (!rects.length) return;
+    // Fall through with fake "spans" made of those rects
+    return _showAnnotPopover(
+      viewerRoot,
+      pageEl,
+      pageNumber,
+      selectedText,
+      rects.map((r) => ({ getBoundingClientRect: () => r, textContent: '' })),
+      pageRect
+    );
+  }
 
+  _showAnnotPopover(
+    viewerRoot,
+    pageEl,
+    pageNumber,
+    selectedText,
+    intersectingSpans,
+    pageRect,
+    range
+  );
+}
+
+
+function _showAnnotPopover(viewerRoot, pageEl, pageNumber, selectedText, spans, pageRect, range) {
+  // Build one rect per span, using its OWN getBoundingClientRect().
+  // PDF.js gives one span per horizontal text run, so each span's
+  // rect is always a single clean rectangle covering that run.
+  //
+  // For the FIRST and LAST span, clip the rect to the actual
+  // selection extent within that span (so partial-span selections
+  // don't over-highlight).
+  const spanRects = [];
+
+  spans.forEach((span, idx) => {
+    const bbox = span.getBoundingClientRect();
+    if (bbox.width < 1 || bbox.height < 1) return;
+
+    let left = bbox.left;
+    let right = bbox.right;
+
+    // Clip first / last span to selection boundary
+    if (range && (idx === 0 || idx === spans.length - 1)) {
+      try {
+        const subRange = document.createRange();
+        if (idx === 0 && span.contains(range.startContainer)) {
+          subRange.setStart(range.startContainer, range.startOffset);
+          subRange.setEnd(span, span.childNodes.length);
+          const subBbox = subRange.getBoundingClientRect();
+          if (subBbox.width > 1) left = subBbox.left;
+        }
+        if (idx === spans.length - 1 && span.contains(range.endContainer)) {
+          const subRange2 = document.createRange();
+          subRange2.setStart(span, 0);
+          subRange2.setEnd(range.endContainer, range.endOffset);
+          const subBbox2 = subRange2.getBoundingClientRect();
+          if (subBbox2.width > 1) right = subBbox2.right;
+        }
+      } catch (e) {
+        // If range manipulation fails for any reason, fall back to full span
+      }
+    }
+
+    spanRects.push({
+      left,
+      right,
+      top: bbox.top,
+      bottom: bbox.bottom,
+      midY: bbox.top + bbox.height / 2,
+      height: bbox.height,
+    });
+  });
+
+  if (!spanRects.length) return;
+
+  // ---------------------------------------------------------------
+  // Group into visual lines using span vertical midpoint.
+  // Since we're working with span bboxes (not client rects),
+  // bold/italic/font-size variations all land on the same midY
+  // as their surrounding text.
+  // ---------------------------------------------------------------
+  const sorted = [...spanRects].sort((a, b) => a.midY - b.midY || a.left - b.left);
   const lines = [];
-  for (const r of rectsWithMid) {
-    // Try to fit into an existing line
+
+  for (const r of sorted) {
     let placed = false;
     for (const line of lines) {
-      // A rect belongs to a line if its midpoint is within 60% of
-      // the line's average height from the line's average midpoint
-      const threshold = Math.max(line.avgHeight, r.height) * 0.6;
+      const threshold = Math.max(line.avgHeight, r.height) * 0.5;
       if (Math.abs(r.midY - line.avgMidY) < threshold) {
         line.rects.push(r);
-        // Update running averages
         line.avgMidY = line.rects.reduce((s, x) => s + x.midY, 0) / line.rects.length;
         line.avgHeight = line.rects.reduce((s, x) => s + x.height, 0) / line.rects.length;
         placed = true;
@@ -860,18 +943,11 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
       }
     }
     if (!placed) {
-      lines.push({
-        rects: [r],
-        avgMidY: r.midY,
-        avgHeight: r.height,
-      });
+      lines.push({ rects: [r], avgMidY: r.midY, avgHeight: r.height });
     }
   }
 
-  // ---------- Step 2: collapse each line into ONE bounding rect ----------
-  // This is the key: one rect per line, spanning from leftmost to rightmost,
-  // using union of top/bottom. This eliminates all duplicate/offset issues
-  // because bold spans get merged into the line they belong to.
+  // Collapse each line into ONE bounding rect
   const lineRects = lines.map((line) => {
     const minLeft = Math.min(...line.rects.map((r) => r.left));
     const maxRight = Math.max(...line.rects.map((r) => r.right));
@@ -886,7 +962,8 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
     };
   });
 
-  const anchorRect = rawRects[0];
+  // Anchor the popover to the first span
+  const anchorRect = spans[0].getBoundingClientRect();
 
   document.querySelectorAll('.annot-popover').forEach((p) => p.remove());
 
@@ -903,6 +980,8 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
     <button data-explain title="Explain with AI">${Icon.sparkles}</button>
   `;
   document.body.appendChild(pop);
+
+  const sel = window.getSelection();
 
   pop.querySelectorAll('[data-color]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -970,7 +1049,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
     });
   }, 0);
 }
-
 function renderNoPreviewYet(body, doc) {
   body.innerHTML = `
     <div class="viewer">

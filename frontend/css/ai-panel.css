@@ -87,3 +87,15 @@
   font-size: var(--text-xs); font-weight: 600; color: var(--text-700); transition: all var(--dur-fast) var(--ease);
 }
 .select-pill.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+
+
+#ai-actions-bar {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--sp-3);
+}
+
+.ai-panel__body {
+  min-height: 0;   /* CRITICAL: allows flex child to actually scroll */
+}

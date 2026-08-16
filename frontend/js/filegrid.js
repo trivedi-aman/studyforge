@@ -14,6 +14,10 @@ import { openTextToPptModal, openYoutubeToNotesModal } from './modals.js';
 
 let root;
 
+
+
+
+
 export function initFileGrid(container) {
   root = container;
   root.innerHTML = `
@@ -26,6 +30,10 @@ export function initFileGrid(container) {
   busOn('sf:nav-changed', () => refresh());
   busOn('sf:documents-changed', () => refresh());
   busOn('sf:search', ({ query }) => refresh(query));
+
+  // Also listen for folders arriving from sidebar's initial load
+  busOn('sf:folders-loaded', () => refresh());
+
   refresh();
 }
 

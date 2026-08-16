@@ -1,6 +1,8 @@
 // ============================================================
 // AI MAGIC PANEL — inline side panel, not overlay.
 // Opens by expanding the panel width and collapsing the sidebar.
+// The actions bar (Ask AI / Summarize / Explain / Generate) is ALWAYS
+// visible, not just on first open — users can switch actions mid-thread.
 // ============================================================
 
 import { Documents, AI } from './api.js';
@@ -24,7 +26,6 @@ export async function openAiPanel(documentId, opts = {}) {
     state.chatSessions[documentId] = { sessionId: null, messages: [] };
   }
 
-  // Collapse sidebar, expand AI panel
   const shell = document.querySelector('.shell');
   if (shell) shell.classList.add('ai-panel-open');
 
@@ -36,6 +37,7 @@ export async function openAiPanel(documentId, opts = {}) {
       </div>
       <button class="icon-btn" id="ai-panel-close">${Icon.close}</button>
     </div>
+    <div id="ai-actions-bar"></div>
     <div class="ai-panel__body" id="ai-panel-body"></div>
     <div class="ai-panel__composer">
       <textarea id="ai-composer-input" placeholder="Ask anything about this document…" rows="1"></textarea>
@@ -49,6 +51,7 @@ export async function openAiPanel(documentId, opts = {}) {
     panelEl.classList.add('open');
   });
 
+  renderActionsBar(doc);
   renderThread(doc);
   wireComposer(doc);
 
@@ -61,9 +64,24 @@ export function closeAiPanel() {
   panelEl.classList.remove('open');
   set({ aiPanelOpen: false });
 
-  // Restore sidebar
   const shell = document.querySelector('.shell');
   if (shell) shell.classList.remove('ai-panel-open');
+}
+
+function renderActionsBar(doc) {
+  const bar = panelEl.querySelector('#ai-actions-bar');
+  if (!bar) return;
+  bar.innerHTML = `
+    <div class="ai-actions" style="padding: 12px 16px 0 16px;">
+      <button class="ai-action" data-action="chat">${Icon.chatBubble}<span class="ai-action__label">Ask AI</span></button>
+      <button class="ai-action" data-action="summarize">${Icon.summarize}<span class="ai-action__label">Summarize</span></button>
+      <button class="ai-action" data-action="explain">${Icon.explain}<span class="ai-action__label">Explain selection</span></button>
+      <button class="ai-action" data-action="generate-notes">${Icon.generate}<span class="ai-action__label">Generate notes</span></button>
+    </div>
+  `;
+  bar.querySelectorAll('.ai-action').forEach((btn) => {
+    btn.addEventListener('click', () => handleAction(doc, btn.dataset.action));
+  });
 }
 
 function renderThread(doc) {
@@ -73,30 +91,21 @@ function renderThread(doc) {
   const hasMessages = session.messages.length > 0;
 
   body.innerHTML = `
-    ${!hasMessages ? actionsGridHTML() : ''}
     <div class="chat-thread" id="chat-thread">
       ${hasMessages ? session.messages.map(msgHTML).join('') : emptyStateHTML()}
     </div>
   `;
 
-  if (!hasMessages) {
-    body.querySelectorAll('.ai-action').forEach((btn) => {
-      btn.addEventListener('click', () => handleAction(doc, btn.dataset.action));
+  // Wire "open generated notes" buttons in job cards
+  body.querySelectorAll('[data-open-doc]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const { openDocument } = await import('./viewer.js');
+      closeAiPanel();
+      openDocument(el.dataset.openDoc);
     });
-  }
-  body.scrollTop = body.scrollHeight;
-}
+  });
 
-function actionsGridHTML() {
-  return `
-    <div class="ai-actions">
-      <button class="ai-action" data-action="chat">${Icon.chatBubble}<span class="ai-action__label">Ask AI</span></button>
-      <button class="ai-action" data-action="summarize">${Icon.summarize}<span class="ai-action__label">Summarize</span></button>
-      <button class="ai-action" data-action="explain">${Icon.explain}<span class="ai-action__label">Explain selection</span></button>
-      <button class="ai-action" data-action="generate-notes">${Icon.generate}<span class="ai-action__label">Generate notes</span></button>
-    </div>
-    <div class="ai-panel__divider">or ask directly below</div>
-  `;
+  body.scrollTop = body.scrollHeight;
 }
 
 function emptyStateHTML() {
@@ -128,13 +137,13 @@ function jobCardHTML(m) {
           <span class="badge__dot ${m.status === 'processing' ? 'pulse' : ''}"></span>${m.status}
         </span>
       </div>
-      <div class="job-card__desc">${m.status === 'processing' ? 'Restructuring this document into study notes…' : m.status === 'failed' ? m.error : 'Notes generated and saved to this folder.'}</div>
-      ${m.status === 'done' ? `<div class="job-card__result" data-open-doc="${m.resultDocId}">${Icon.notes} Open generated notes</div>` : ''}
+      <div class="job-card__desc">${m.status === 'processing' ? 'Restructuring this document into study notes…' : m.status === 'failed' ? escapeHtml(m.error || '') : 'Notes generated and saved to this folder.'}</div>
+      ${m.status === 'done' ? `<div class="job-card__result" data-open-doc="${m.resultDocId}" style="cursor:pointer;">${Icon.notes} Open generated notes</div>` : ''}
     </div>`;
 }
 
 function formatChatText(text) {
-  return `<p>${escapeHtml(text).replace(/\n\n/g, '</p><p>')}</p>`;
+  return `<p>${escapeHtml(text).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
 }
 
 function wireComposer(doc) {
@@ -165,8 +174,7 @@ async function ensureEmbedded(doc) {
     await AI.embedDocument(doc.id);
     embeddedDocs.add(doc.id);
   } catch (e) {
-    console.warn('Embed failed (AI service may not be running):', e.message);
-    // Don't block — the chat will still work, just without RAG context
+    console.warn('Embed failed:', e.message);
   }
 }
 
@@ -182,7 +190,13 @@ async function handleAction(doc, action) {
       return summary;
     });
   } else if (action === 'explain') {
-    toast('Select some text in the document first, then choose "Explain with AI"', 'info', 4000);
+    // Selection-based — prompt user to select first
+    const currentSelection = window.getSelection()?.toString().trim();
+    if (currentSelection && currentSelection.length > 3) {
+      runExplain(doc, currentSelection);
+    } else {
+      toast('Select some text in the document first, then click Explain', 'info', 4000);
+    }
   } else if (action === 'generate-notes') {
     startGenerateNotesJob(doc);
   }
@@ -223,7 +237,9 @@ async function runWithTyping(doc, fn, skipUserPush = false) {
   } catch (e) {
     session.messages = session.messages.filter((m) => m !== typingMsg);
     const msg = e.message?.includes('503')
-      ? 'The AI service is not running yet. This feature will be available once the AI microservice is deployed.'
+      ? 'The AI service is not running yet.'
+      : e.message?.includes('502')
+      ? 'The AI model call failed — try again in a moment.'
       : "Something went wrong reaching the AI service — try again in a moment.";
     session.messages.push({ role: 'assistant', content: msg });
   }
@@ -243,24 +259,10 @@ async function startGenerateNotesJob(doc) {
       if (job.status === 'done') { jobMsg.resultDocId = job.result_document_id; toast('Notes generated', 'success'); }
       if (job.status === 'failed') { jobMsg.error = job.error_message; toast('Generation failed', 'danger'); }
       renderThread(doc);
-      if (job.status === 'done' || job.status === 'failed') {
-        const body = panelEl.querySelector('#ai-panel-body');
-        if (body) {
-          body.querySelectorAll('[data-open-doc]').forEach((el) => {
-            el.addEventListener('click', async () => {
-              const { openDocument } = await import('./viewer.js');
-              closeAiPanel();
-              openDocument(el.dataset.openDoc);
-            });
-          });
-        }
-      }
     });
   } catch (e) {
     jobMsg.status = 'failed';
-    jobMsg.error = e.message?.includes('503')
-      ? 'AI service is not running yet.'
-      : e.message || 'Failed to start job.';
+    jobMsg.error = e.message || 'Failed to start job.';
     renderThread(doc);
   }
 }

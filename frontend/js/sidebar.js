@@ -322,6 +322,7 @@ function promptRenameFolder(folder) {
     renderTree();
     toast('Folder renamed', 'success');
     close();
+    busEmit('sf:folders-loaded', {});
     busEmit('sf:nav-changed', {});
   });
 }

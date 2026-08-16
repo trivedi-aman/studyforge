@@ -404,3 +404,14 @@
   .notebook-page__body code { background: #f0f0f0 !important; }
   .notebook-page__body pre { background: #1a1a1a !important; color: #eee !important; }
 }
+
+
+
+/* Hide the AI Magic FAB whenever the AI panel is open */
+.shell.ai-panel-open .ai-fab {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.8);
+  transition: opacity var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
