@@ -1,9 +1,13 @@
 // ============================================================
-// NOTEBOOK VIEW — renders .md AI-generated notes as a proper
-// multi-page notebook (README 2.2/2.3). Scrollable with mouse,
-// paginated like a real document, exportable to PDF via jsPDF.
-// Editable with formatting toolbar; saves create a new
-// document_versions row (README 2.6).
+// NOTEBOOK VIEW
+// Scroll: .notebook-outer is the ONE scroll container, position:absolute
+//         inset so it fills exactly the space below the toolbar.
+//         contenteditable divs have no overflow of their own.
+// Pages:  one .notebook-page per logical "page". Page 1 has a cover.
+//         Additional pages added by "Add page" button or auto-split.
+// Export: window.print() with a @media print stylesheet that hides
+//         everything except the notebook content. Browser renders
+//         exact CSS — correct fonts, colours, everything.
 // ============================================================
 
 import { Documents } from './api.js';
@@ -14,243 +18,283 @@ import { openAiPanel } from './ai-panel.js';
 
 const HIGHLIGHT_COLORS = ['#FFF3A0', '#B8F1D0', '#BEE0FF', '#FBCFE8'];
 
-// Approximate height of one A4-like page content area in px.
-// 934px total page height - 130px cover (page 1 only) - 40px footer - 80px padding ≈ 684px
-const PAGE_CONTENT_HEIGHT = 684;
-// Continuation pages have no cover: 934 - 40 footer - 48 padding
-const CONTINUATION_CONTENT_HEIGHT = 846;
-
 let nbState = null;
+
+// ---- public entry point ----
 
 export async function renderNotebook(body, doc) {
   teardownNotebook();
 
-  const content = await Documents.getNotesContent(doc.id);
-  const meta = doc.display_metadata || {};
-  const coverColor = meta.cover_color || '#6C5CE7';
-  const icon = meta.icon || '📄';
-  const renderedHTML = renderMarkdown(content);
+  const rawContent = await Documents.getNotesContent(doc.id);
+  const meta        = doc.display_metadata || {};
+  const coverColor  = meta.cover_color || '#6C5CE7';
+  const icon        = meta.icon        || '📄';
 
+  // Split markdown into logical pages on --- or ===PAGE=== markers.
+  // If there are none, the whole thing is one page.
+  const pageContents = splitIntoPages(rawContent);
+
+  // Build shell
   body.innerHTML = `
-    <div class="viewer" id="notebook-viewer-root">
+    <div class="viewer" id="nb-viewer">
       <div class="viewer-toolbar">
         <div class="viewer-toolbar__filename">
           ${Icon.notes}
           <span>${escapeHtml(doc.filename)}</span>
-          ${doc.is_ai_generated ? '<span class="badge badge--accent" style="margin-left:8px;">AI-generated</span>' : ''}
+          ${doc.is_ai_generated
+            ? '<span class="badge badge--accent" style="margin-left:8px;">AI-generated</span>'
+            : ''}
         </div>
         <div class="viewer-toolbar__group">
-          <button class="btn btn--ghost btn--sm" id="nb-export-pdf" title="Export as PDF">${Icon.download} Export PDF</button>
+          <button class="btn btn--ghost btn--sm" id="nb-add-page">${Icon.folderPlus} Add page</button>
+          <button class="btn btn--ghost btn--sm" id="nb-export-pdf">${Icon.download} Export PDF</button>
           <div class="viewer-toolbar__sep"></div>
-          <span class="badge badge--tag" id="version-badge">v${doc.current_version}</span>
+          <span class="badge badge--tag" id="nb-version-badge">v${doc.current_version}</span>
         </div>
       </div>
 
-      <div class="notebook" id="notebook-scroll">
-        <div class="notebook-toolbar" id="notebook-toolbar">
-          <button class="notebook-toolbar__btn" data-cmd="bold" title="Bold"><b>B</b></button>
-          <button class="notebook-toolbar__btn" data-cmd="italic" title="Italic"><i>I</i></button>
+      <!-- THE scroll container — position:absolute so it sits exactly
+           below the 52px toolbar with no interference from flex parents -->
+      <div class="notebook-outer" id="nb-outer">
+        <div class="notebook-toolbar" id="nb-toolbar">
+          <button class="notebook-toolbar__btn" data-cmd="bold"          title="Bold"><b>B</b></button>
+          <button class="notebook-toolbar__btn" data-cmd="italic"        title="Italic"><i>I</i></button>
+          <button class="notebook-toolbar__btn" data-cmd="underline"     title="Underline"><u>U</u></button>
           <div class="notebook-toolbar__sep"></div>
-          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-value="H2" title="Heading">H1</button>
-          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-value="H3" title="Subheading">H2</button>
-          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-value="P" title="Paragraph">¶</button>
+          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-val="h1" title="Heading 1">H1</button>
+          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-val="h2" title="Heading 2">H2</button>
+          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-val="h3" title="Heading 3">H3</button>
+          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-val="p"  title="Paragraph">¶</button>
           <div class="notebook-toolbar__sep"></div>
           <button class="notebook-toolbar__btn" data-cmd="insertUnorderedList" title="Bullet list">${Icon.list}</button>
-          <button class="notebook-toolbar__btn" data-cmd="formatBlock" data-value="BLOCKQUOTE" title="Quote">"</button>
+          <button class="notebook-toolbar__btn" data-cmd="insertOrderedList"   title="Numbered list">1.</button>
           <div class="notebook-toolbar__sep"></div>
-          <div class="notebook-toolbar__colors" id="highlight-colors" title="Highlight color">
-            ${HIGHLIGHT_COLORS.map((c) => `<button class="notebook-toolbar__color" data-color="${c}" style="background:${c};"></button>`).join('')}
-            <button class="notebook-toolbar__color" data-color="none" style="background:#fff;border:1px solid var(--line-strong);" title="Remove highlight"></button>
+          <div class="notebook-toolbar__colors">
+            ${HIGHLIGHT_COLORS.map(c =>
+              `<button class="notebook-toolbar__color" data-color="${c}"
+                style="background:${c};" title="Highlight"></button>`).join('')}
+            <button class="notebook-toolbar__color" data-color="none"
+              style="background:#fff;border:1px solid var(--line-strong);"
+              title="Remove highlight"></button>
           </div>
           <div class="notebook-toolbar__sep"></div>
-          <select class="notebook-toolbar__size" id="font-size-select" title="Text size">
+          <select class="notebook-toolbar__size" id="nb-font-size">
             <option value="3">Normal</option>
             <option value="5">Large</option>
             <option value="1">Small</option>
           </select>
         </div>
 
-        <div id="notebook-pages"></div>
+        <div class="notebook-pages" id="nb-pages"></div>
       </div>
 
-      <button class="ai-fab" id="ai-fab-btn"><span class="ai-fab__spark">${Icon.sparkles}</span> AI Magic</button>
-      <div class="notebook__savebar saved" id="save-indicator">
-        <span class="dot"></span><span id="save-text">Saved</span>
+      <div class="notebook__savebar" id="nb-savebar">
+        <span class="dot"></span><span id="nb-save-text">Saved</span>
       </div>
     </div>
   `;
 
-  const viewerRoot = body.querySelector('#notebook-viewer-root');
-  viewerRoot.querySelector('#ai-fab-btn').addEventListener('click', () => openAiPanel(doc.id));
-  viewerRoot.querySelector('#nb-export-pdf').addEventListener('click', () => exportNotebookAsPdf(doc));
+  const viewerEl    = body.querySelector('#nb-viewer');
+  const outerEl     = body.querySelector('#nb-outer');
+  const pagesEl     = body.querySelector('#nb-pages');
+  const toolbarEl   = body.querySelector('#nb-toolbar');
+  const savebarEl   = body.querySelector('#nb-savebar');
+  const saveTextEl  = body.querySelector('#nb-save-text');
+  const versionBadge = body.querySelector('#nb-version-badge');
 
-  const pagesHost = viewerRoot.querySelector('#notebook-pages');
-  const toolbar = viewerRoot.querySelector('#notebook-toolbar');
-  const indicator = viewerRoot.querySelector('#save-indicator');
-  const saveText = viewerRoot.querySelector('#save-text');
-  const versionBadge = viewerRoot.querySelector('#version-badge');
+  // Render initial pages
+  pageContents.forEach((md, idx) => {
+    appendPage(pagesEl, doc, md, idx, coverColor, icon, pageContents.length);
+  });
 
-  // Build multi-page layout
-  buildPages(pagesHost, renderedHTML, doc, coverColor, icon);
-
-  // Initialise state
+  // State
   nbState = {
     dirty: false,
     saveTimer: null,
-    doc,
-    pagesHost,
-    indicator,
-    saveText,
-    versionBadge,
-    coverColor,
-    icon,
+    doc, pagesEl, savebarEl, saveTextEl, versionBadge,
+    coverColor, icon,
   };
 
   // Wire toolbar
-  wireToolbar(toolbar);
+  wireToolbar(toolbarEl);
 
-  // Wire edit tracking on all content areas
-  wireEditors(pagesHost);
+  // Wire buttons
+  body.querySelector('#nb-add-page').addEventListener('click', () => {
+    const count = pagesEl.querySelectorAll('.notebook-page').length;
+    appendPage(pagesEl, doc, '', count, coverColor, icon, count + 1, true);
+    updatePageFooters(pagesEl);
+    // Scroll to new page
+    pagesEl.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
-  // Sync on tab close
+  body.querySelector('#nb-export-pdf').addEventListener('click', () => exportPdf(doc));
+
+  viewerEl.querySelector('#ai-fab-btn')?.addEventListener('click', () => openAiPanel(doc.id));
+
+  // We need the FAB — add it
+  const fab = document.createElement('button');
+  fab.className = 'ai-fab';
+  fab.id = 'ai-fab-btn';
+  fab.innerHTML = `<span class="ai-fab__spark">${Icon.sparkles}</span> AI Magic`;
+  fab.addEventListener('click', () => openAiPanel(doc.id));
+  viewerEl.appendChild(fab);
+
+  // beforeunload sync
   const unloadHandler = () => { if (nbState?.dirty) saveNow(); };
   window.addEventListener('beforeunload', unloadHandler);
   nbState.unloadHandler = unloadHandler;
 }
 
-function buildPages(host, htmlContent, doc, coverColor, icon) {
-  host.innerHTML = '';
+// ---- page builder ----
 
-  // Render into a hidden measurer to figure out page breaks
-  const measurer = document.createElement('div');
-  measurer.style.cssText = `
-    position:absolute; visibility:hidden; pointer-events:none;
-    width:720px; padding:32px;
-    font-family:'Source Serif 4', Georgia, serif;
-    font-size:1.05rem; line-height:1.85;
-  `;
-  measurer.innerHTML = htmlContent;
-  document.body.appendChild(measurer);
+function appendPage(pagesEl, doc, markdownContent, pageIdx, coverColor, icon, totalPages, focusAfter = false) {
+  const isFirst = pageIdx === 0;
+  const html    = renderMarkdown(markdownContent);
 
-  // Collect all top-level block nodes and their heights
-  const blocks = Array.from(measurer.children);
-  const blockData = blocks.map((b) => ({
-    html: b.outerHTML,
-    height: b.getBoundingClientRect().height + 16, // 16px gap between blocks
-  }));
-  document.body.removeChild(measurer);
+  const page = document.createElement('div');
+  page.className = 'notebook-page';
+  page.dataset.pageIdx = pageIdx;
 
-  // Paginate
-  const pages = [];
-  let currentPage = { blocks: [], usedHeight: 0 };
-  const isFirstPage = () => pages.length === 0;
-  const maxHeight = () => isFirstPage() ? PAGE_CONTENT_HEIGHT : CONTINUATION_CONTENT_HEIGHT;
+  let inner = '';
 
-  for (const block of blockData) {
-    if (currentPage.usedHeight + block.height > maxHeight() && currentPage.blocks.length > 0) {
-      pages.push(currentPage);
-      currentPage = { blocks: [], usedHeight: 0 };
-    }
-    currentPage.blocks.push(block);
-    currentPage.usedHeight += block.height;
-  }
-  if (currentPage.blocks.length > 0) pages.push(currentPage);
-
-  // If nothing was parsed, make one page with the raw content
-  if (pages.length === 0) {
-    pages.push({ blocks: [{ html: htmlContent, height: 100 }], usedHeight: 100 });
-  }
-
-  // Render pages
-  pages.forEach((page, idx) => {
-    const pageEl = document.createElement('div');
-    pageEl.className = `notebook__page ${idx > 0 ? 'notebook__page--continuation' : ''}`;
-
-    let inner = '';
-    if (idx === 0) {
-      inner += `
-        <div class="notebook__cover" style="background:linear-gradient(135deg, ${coverColor}, ${shade(coverColor)});">
-          <div class="notebook__cover-icon">${icon}</div>
-          <div class="notebook__cover-title">${escapeHtml(doc.filename.replace(/\.md$/, ''))}</div>
-          <div class="notebook__cover-meta">
-            Generated from ${
-              doc.source_type === 'youtube_notes' ? 'a YouTube video'
-              : doc.source_type === 'ppt_to_notes' ? 'a document'
-              : 'your notes'
-            } · v${doc.current_version}
-          </div>
-        </div>
-      `;
-    }
+  if (isFirst) {
+    const sourceLabel =
+      doc.source_type === 'youtube_notes' ? 'a YouTube video'
+      : doc.source_type === 'ppt_to_notes' ? 'a document'
+      : 'your notes';
     inner += `
-      <div class="notebook__content-wrap">
-        <div class="notebook__content" contenteditable="true" data-page-idx="${idx}">
-          ${page.blocks.map((b) => b.html).join('')}
-        </div>
-      </div>
-      <div class="notebook__page-footer">Page ${idx + 1} of ${pages.length}</div>
-    `;
+      <div class="notebook-page__cover"
+           style="background:linear-gradient(135deg,${coverColor},${shade(coverColor)});">
+        <div class="notebook-page__cover-icon">${icon}</div>
+        <div class="notebook-page__cover-title">${escapeHtml(doc.filename.replace(/\.md$/, ''))}</div>
+        <div class="notebook-page__cover-meta">Generated from ${sourceLabel} · v${doc.current_version}</div>
+      </div>`;
+  }
 
-    pageEl.innerHTML = inner;
-    host.appendChild(pageEl);
+  inner += `
+    <div class="notebook-page__body" contenteditable="true" spellcheck="true">${html || '<p><br></p>'}</div>
+    <div class="notebook-page__footer">Page ${pageIdx + 1} of ${totalPages}</div>
+  `;
+
+  page.innerHTML = inner;
+  pagesEl.appendChild(page);
+
+  // Wire the editor inside this page
+  const editor = page.querySelector('.notebook-page__body');
+  wireEditor(editor);
+
+  if (focusAfter) {
+    requestAnimationFrame(() => {
+      editor.focus();
+      // place cursor at start
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(true);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+  }
+}
+
+function wireEditor(editor) {
+  // Track changes
+  editor.addEventListener('input', markDirty);
+
+  // Save on blur
+  editor.addEventListener('blur', () => {
+    if (nbState?.dirty) saveNow();
+  });
+
+  // CRITICAL: stop the editor from trapping wheel/scroll events.
+  // When the user scrolls and the editor itself has no overflow (scrollHeight ≤ clientHeight),
+  // the wheel event must NOT be stopped — it naturally bubbles to .notebook-outer.
+  // contenteditable does NOT trap wheel events by default, so this is mainly
+  // a safeguard; the real fix is that .notebook-outer is the scroll container
+  // and the editor has no overflow:auto/scroll of its own.
+  editor.style.overflow = 'visible';
+}
+
+function updatePageFooters(pagesEl) {
+  const pages = pagesEl.querySelectorAll('.notebook-page');
+  const total = pages.length;
+  pages.forEach((p, i) => {
+    const footer = p.querySelector('.notebook-page__footer');
+    if (footer) footer.textContent = `Page ${i + 1} of ${total}`;
+    p.dataset.pageIdx = i;
   });
 }
 
+// ---- toolbar ----
+
 function wireToolbar(toolbar) {
-  toolbar.querySelectorAll('[data-cmd]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      // Apply to whatever content area is focused
-      const active = document.activeElement;
-      if (active && active.classList.contains('notebook__content')) {
-        document.execCommand(btn.dataset.cmd, false, btn.dataset.value || undefined);
-        markDirty();
-      } else {
-        // Focus the first editable area if none is active
-        const first = document.querySelector('.notebook__content[contenteditable]');
-        if (first) { first.focus(); document.execCommand(btn.dataset.cmd, false, btn.dataset.value || undefined); markDirty(); }
-      }
+  toolbar.querySelectorAll('[data-cmd]').forEach(btn => {
+    btn.addEventListener('mousedown', e => {
+      // mousedown fires BEFORE blur on the editor, keeping focus
+      e.preventDefault();
+      const val = btn.dataset.val || btn.dataset.value || null;
+      document.execCommand(btn.dataset.cmd, false, val);
+      markDirty();
     });
   });
 
-  toolbar.querySelector('#highlight-colors').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-color]');
-    if (!btn) return;
-    document.execCommand('hiliteColor', false, btn.dataset.color === 'none' ? 'transparent' : btn.dataset.color);
-    markDirty();
-  });
+  toolbar.querySelector('#nb-toolbar .notebook-toolbar__colors')
+    ?.addEventListener('mousedown', e => {
+      const btn = e.target.closest('[data-color]');
+      if (!btn) return;
+      e.preventDefault();
+      const color = btn.dataset.color === 'none' ? 'transparent' : btn.dataset.color;
+      document.execCommand('hiliteColor', false, color);
+      markDirty();
+    });
 
-  toolbar.querySelector('#font-size-select').addEventListener('change', (e) => {
+  toolbar.querySelector('#nb-font-size')?.addEventListener('change', e => {
     document.execCommand('fontSize', false, e.target.value);
     markDirty();
   });
 }
 
-function wireEditors(pagesHost) {
-  pagesHost.querySelectorAll('.notebook__content[contenteditable]').forEach((editor) => {
-    editor.addEventListener('input', markDirty);
+// ---- dirty / save ----
 
-    // Blur → save
-    editor.addEventListener('blur', () => {
-      if (nbState?.dirty) saveNow();
+function markDirty() {
+  if (!nbState) return;
+  nbState.dirty = true;
+  nbState.savebarEl.classList.add('show');
+  nbState.savebarEl.classList.remove('saved');
+  nbState.saveTextEl.textContent = 'Unsaved changes';
+  clearTimeout(nbState.saveTimer);
+  nbState.saveTimer = setTimeout(saveNow, 75_000);
+}
+
+async function saveNow() {
+  if (!nbState || !nbState.dirty) return;
+  const { doc, pagesEl, savebarEl, saveTextEl, versionBadge } = nbState;
+  saveTextEl.textContent = 'Saving…';
+
+  try {
+    const editors = pagesEl.querySelectorAll('.notebook-page__body[contenteditable]');
+    let combined = '';
+    editors.forEach((ed, i) => {
+      if (i > 0) combined += '\n\n---\n\n'; // page break marker
+      combined += htmlToMarkdownApprox(ed.innerHTML);
     });
 
-    // Make scroll work seamlessly — prevent contenteditable from capturing
-    // scroll events that should go to the parent .notebook container
-    editor.addEventListener('wheel', (e) => {
-      const notebook = pagesHost.closest('.notebook');
-      if (!notebook) return;
+    const res = await Documents.saveNotesContent(doc.id, combined);
 
-      const editorRect = editor.getBoundingClientRect();
-      const atTop = editor.scrollTop <= 0;
-      const atBottom = editor.scrollTop + editorRect.height >= editor.scrollHeight - 1;
-
-      // If content doesn't overflow, or we're at the edge, let parent scroll
-      if (editor.scrollHeight <= editorRect.height || (e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
-        // Don't prevent default — let the event bubble to .notebook
-        return;
+    if (nbState) {
+      nbState.dirty = false;
+      savebarEl.classList.add('saved');
+      saveTextEl.textContent = 'Saved';
+      if (res?.new_version) {
+        doc.current_version = res.new_version;
+        versionBadge.textContent = `v${res.new_version}`;
       }
-    }, { passive: true });
-  });
+      setTimeout(() => savebarEl.classList.remove('show'), 2000);
+      toast('Saved', 'success', 1800);
+    }
+  } catch (err) {
+    if (nbState) saveTextEl.textContent = 'Save failed';
+    console.error(err);
+  }
 }
 
 function teardownNotebook() {
@@ -260,239 +304,115 @@ function teardownNotebook() {
   nbState = null;
 }
 
-function markDirty() {
-  if (!nbState) return;
-  nbState.dirty = true;
-  nbState.indicator.classList.remove('saved');
-  nbState.indicator.classList.add('show');
-  nbState.saveText.textContent = 'Unsaved changes';
-  clearTimeout(nbState.saveTimer);
-  nbState.saveTimer = setTimeout(() => saveNow(), 75000);
-}
+// ---- export ----
 
-async function saveNow() {
-  if (!nbState || !nbState.dirty) return;
-  const { doc, pagesHost, indicator, saveText, versionBadge } = nbState;
-  saveText.textContent = 'Saving…';
+function exportPdf(doc) {
+  // Clone the notebook pages into a hidden print-only container attached to <body>.
+  // window.print() will render that via @media print CSS — correct fonts, colours,
+  // border-radius on cover, everything — then we remove the clone.
 
-  try {
-    // Collect content from all pages in order
-    const editors = pagesHost.querySelectorAll('.notebook__content[contenteditable]');
-    let fullHTML = '';
-    editors.forEach((ed) => { fullHTML += ed.innerHTML; });
+  const existing = document.getElementById('nb-print-root');
+  if (existing) existing.remove();
 
-    const markdown = htmlToMarkdownApprox(fullHTML);
-    const res = await Documents.saveNotesContent(doc.id, markdown);
+  const printRoot = document.createElement('div');
+  printRoot.id = 'nb-print-root';
+  printRoot.className = 'notebook-print-root';
 
-    if (nbState) {
-      nbState.dirty = false;
-      indicator.classList.add('saved');
-      saveText.textContent = 'Saved';
-      if (res?.new_version) {
-        doc.current_version = res.new_version;
-        versionBadge.textContent = `v${res.new_version}`;
-      }
-      setTimeout(() => indicator.classList.remove('show'), 1800);
-      toast('Notes saved as a new version', 'success', 2000);
-    }
-  } catch (e) {
-    if (nbState) saveText.textContent = 'Save failed — will retry';
-    console.error('Notes save failed:', e);
-  }
-}
+  // Copy just the pages
+  const sourcePagesEl = document.getElementById('nb-pages');
+  if (!sourcePagesEl) { toast('Nothing to export', 'danger'); return; }
 
-// ============================================================
-// EXPORT TO PDF via jsPDF
-// ============================================================
+  const pagesClone = sourcePagesEl.cloneNode(true);
 
-function exportNotebookAsPdf(doc) {
-  const { jsPDF } = window.jspdf;
-  if (!jsPDF) {
-    toast('PDF export library not loaded', 'danger');
-    return;
-  }
-
-  toast('Generating PDF…', 'info', 2000);
-
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 56;
-  const contentWidth = pageWidth - margin * 2;
-  const maxY = pageHeight - margin;
-
-  // Collect all text content from editors
-  const editors = document.querySelectorAll('.notebook__content[contenteditable]');
-  const allBlocks = [];
-
-  editors.forEach((editor) => {
-    Array.from(editor.children).forEach((node) => {
-      const tag = node.tagName?.toLowerCase() || 'p';
-      const text = (node.textContent || '').trim();
-      if (!text) return;
-      allBlocks.push({ tag, text });
-    });
+  // Make cloned editors non-editable (cleaner print)
+  pagesClone.querySelectorAll('[contenteditable]').forEach(el => {
+    el.removeAttribute('contenteditable');
   });
 
-  let y = margin;
-  let pageNum = 1;
-  const totalPagesPlaceholder = '{total}';
+  printRoot.appendChild(pagesClone);
+  document.body.appendChild(printRoot);
 
-  // Title page header
-  const meta = doc.display_metadata || {};
-  pdf.setFillColor(108, 92, 231);
-  pdf.rect(0, 0, pageWidth, 100, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(20);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text(doc.filename.replace(/\.md$/, ''), margin, 65);
-  pdf.setFontSize(9);
-  pdf.setFont('helvetica', 'normal');
-  const sourceLabel = doc.source_type === 'youtube_notes' ? 'Generated from a YouTube video'
-    : doc.source_type === 'ppt_to_notes' ? 'Generated from a document'
-    : 'Study notes';
-  pdf.text(`${sourceLabel}  ·  v${doc.current_version}  ·  Exported ${new Date().toLocaleDateString()}`, margin, 85);
-  pdf.setTextColor(0, 0, 0);
-  y = 130;
-
-  function addPageNumber() {
-    pdf.setFontSize(9);
-    pdf.setTextColor(150);
-    pdf.text(`Page ${pageNum}`, pageWidth / 2, pageHeight - 30, { align: 'center' });
-    pdf.setTextColor(0);
-  }
-
-  function newPage() {
-    addPageNumber();
-    pageNum++;
-    pdf.addPage();
-    y = margin;
-  }
-
-  for (const block of allBlocks) {
-    let fontSize = 11;
-    let fontStyle = 'normal';
-    let lineSpacing = 16;
-    let blockGap = 12;
-
-    switch (block.tag) {
-      case 'h1':
-        fontSize = 18; fontStyle = 'bold'; lineSpacing = 22; blockGap = 18;
-        break;
-      case 'h2':
-        fontSize = 15; fontStyle = 'bold'; lineSpacing = 20; blockGap = 16;
-        break;
-      case 'h3':
-        fontSize = 13; fontStyle = 'bold'; lineSpacing = 18; blockGap = 14;
-        break;
-      case 'li':
-        fontSize = 11; blockGap = 8;
-        break;
-      case 'blockquote':
-        fontSize = 11; fontStyle = 'italic'; blockGap = 14;
-        break;
-      case 'pre': case 'code':
-        fontSize = 9.5; lineSpacing = 14;
-        break;
-      default:
-        break;
-    }
-
-    pdf.setFont('helvetica', fontStyle);
-    pdf.setFontSize(fontSize);
-
-    const prefix = block.tag === 'li' ? '  •  ' : block.tag === 'blockquote' ? '  │  ' : '';
-    const textToRender = prefix + block.text;
-    const lines = pdf.splitTextToSize(textToRender, contentWidth);
-    const blockHeight = lines.length * lineSpacing + blockGap;
-
-    if (y + blockHeight > maxY) {
-      newPage();
-    }
-
-    // Draw blockquote bar
-    if (block.tag === 'blockquote') {
-      pdf.setDrawColor(108, 92, 231);
-      pdf.setLineWidth(2);
-      pdf.line(margin, y - 2, margin, y + lines.length * lineSpacing + 2);
-    }
-
-    lines.forEach((line) => {
-      if (y > maxY) newPage();
-      pdf.text(line, margin + (block.tag === 'blockquote' ? 8 : 0), y);
-      y += lineSpacing;
+  // Small delay so DOM paints, then print
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.print();
+      // Clean up after dialog closes
+      setTimeout(() => printRoot.remove(), 1000);
     });
-    y += blockGap;
-  }
-
-  addPageNumber();
-
-  // Save
-  const safeName = doc.filename.replace(/\.md$/, '').replace(/[^a-zA-Z0-9\s_-]/g, '').trim();
-  pdf.save(`${safeName || 'notes'}.pdf`);
-  toast('PDF exported', 'success');
+  });
 }
 
-// ============================================================
-// Helpers
-// ============================================================
+// ---- markdown / page splitting ----
 
-function shade(hex) {
-  const n = parseInt(hex.replace('#', ''), 16);
-  const r = Math.max(0, (n >> 16) - 30);
-  const g = Math.max(0, ((n >> 8) & 0xff) - 30);
-  const b = Math.max(0, (n & 0xff) - 30);
-  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+function splitIntoPages(markdown) {
+  // Split on --- or ===PAGE=== as page break markers
+  const parts = markdown.split(/\n(?:---|===PAGE===)\n/);
+  return parts.map(p => p.trim()).filter(Boolean);
 }
+
+// ---- markdown → HTML ----
 
 function renderMarkdown(md) {
+  if (!md || !md.trim()) return '<p><br></p>';
   if (window.marked) {
-    try { return window.marked.parse(md); } catch (e) { /* fall through */ }
+    try {
+      return window.marked.parse(md);
+    } catch (e) { /* fall through */ }
   }
   return naiveMarkdown(md);
 }
 
 function naiveMarkdown(md) {
-  let html = escapeHtml(md);
-  html = html
+  let html = escapeHtml(md)
     .replace(/^### (.*)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/^## (.*)$/gm,  '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm,   '<h1>$1</h1>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^&gt; (.*)$/gm, '<blockquote>$1</blockquote>')
-    .replace(/^- (.*)$/gm, '<li>$1</li>')
-    .replace(/\n{2,}/g, '</p><p>');
+    .replace(/\*(.+?)\*/g,     '<em>$1</em>')
+    .replace(/`(.+?)`/g,       '<code>$1</code>')
+    .replace(/^&gt; (.*)$/gm,  '<blockquote>$1</blockquote>')
+    .replace(/^- (.*)$/gm,     '<li>$1</li>')
+    .replace(/\n{2,}/g,        '</p><p>');
   html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
   return `<p>${html}</p>`;
 }
 
+// ---- HTML → markdown (approximate, for save) ----
+
 function htmlToMarkdownApprox(html) {
   const div = document.createElement('div');
   div.innerHTML = html;
-  let out = '';
-  div.childNodes.forEach((node) => { out += nodeToMd(node); });
-  return out.trim() + '\n';
+  return Array.from(div.childNodes).map(nodeToMd).join('').trim() + '\n';
 }
 
 function nodeToMd(node) {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent;
-  const tag = node.tagName?.toLowerCase();
+  const tag   = node.tagName?.toLowerCase() || '';
   const inner = Array.from(node.childNodes).map(nodeToMd).join('');
   switch (tag) {
-    case 'h1': return `# ${inner}\n\n`;
-    case 'h2': return `## ${inner}\n\n`;
-    case 'h3': return `### ${inner}\n\n`;
-    case 'p': return `${inner}\n\n`;
+    case 'h1':         return `# ${inner}\n\n`;
+    case 'h2':         return `## ${inner}\n\n`;
+    case 'h3':         return `### ${inner}\n\n`;
+    case 'p':          return `${inner}\n\n`;
     case 'strong': case 'b': return `**${inner}**`;
-    case 'em': case 'i': return `*${inner}*`;
-    case 'code': return `\`${inner}\``;
-    case 'li': return `- ${inner}\n`;
+    case 'em':    case 'i':  return `*${inner}*`;
+    case 'u':          return `${inner}`;
+    case 'code':       return `\`${inner}\``;
+    case 'li':         return `- ${inner}\n`;
     case 'ul': case 'ol': return `${inner}\n`;
     case 'blockquote': return `> ${inner}\n\n`;
-    case 'br': return '\n';
-    case 'div': return `${inner}\n`;
-    default: return inner;
+    case 'br':         return '\n';
+    case 'div':        return `${inner}\n`;
+    default:           return inner;
   }
+}
+
+// ---- helpers ----
+
+function shade(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const r = Math.max(0, (n >> 16)        - 30);
+  const g = Math.max(0, ((n >> 8) & 0xff) - 30);
+  const b = Math.max(0, (n & 0xff)        - 30);
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }

@@ -3,14 +3,25 @@
    ============================================================ */
 
 .viewer {
-  display: flex; flex-direction: column; flex: 1;
-  background: var(--surface-sunk); position: relative;
-  overflow: hidden; min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  inset: 0;
+  background: var(--surface-sunk);
+  overflow: hidden;
 }
 
 .viewer-toolbar {
-  height: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); gap: var(--sp-3);
+  height: 52px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  gap: var(--sp-3);
+  z-index: 10;
 }
 .viewer-toolbar__group { display: flex; align-items: center; gap: var(--sp-1); }
 .viewer-toolbar__sep { width: 1px; height: 20px; background: var(--line); margin: 0 var(--sp-2); }
@@ -20,32 +31,54 @@
 }
 .viewer-toolbar__pagetotal { font-size: var(--text-xs); color: var(--text-500); font-family: var(--font-mono); }
 .viewer-toolbar__zoom { font-size: var(--text-xs); color: var(--text-500); font-family: var(--font-mono); width: 42px; text-align: center; }
-.viewer-toolbar__filename { font-size: var(--text-sm); font-weight: 600; display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.viewer-toolbar__filename {
+  font-size: var(--text-sm); font-weight: 600;
+  display: flex; align-items: center; gap: var(--sp-2); min-width: 0;
+}
 .viewer-toolbar__filename svg { width: 16px; height: 16px; flex-shrink: 0; }
 .viewer-toolbar__filename span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 
-.viewer-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+/* PDF viewer body */
+.viewer-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
 
 .viewer-thumbs {
-  width: 132px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--line);
-  overflow-y: auto; min-height: 0; padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2);
+  width: 132px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 .viewer-thumb {
-  border: 2px solid transparent; border-radius: var(--r-sm); overflow: hidden; cursor: pointer; position: relative;
-  background: #fff; aspect-ratio: 3/4; display: flex; align-items: center; justify-content: center;
+  border: 2px solid transparent; border-radius: var(--r-sm); overflow: hidden; cursor: pointer;
+  position: relative; background: #fff; aspect-ratio: 3/4;
+  display: flex; align-items: center; justify-content: center;
   box-shadow: var(--shadow-sm); flex-shrink: 0;
 }
 .viewer-thumb.active { border-color: var(--accent); }
-.viewer-thumb canvas, .viewer-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.viewer-thumb canvas { width: 100%; height: 100%; object-fit: contain; }
 .viewer-thumb__num {
   position: absolute; bottom: 3px; right: 4px; font-family: var(--font-mono); font-size: 9px;
   color: var(--text-400); background: rgba(255,255,255,0.85); padding: 0 3px; border-radius: 3px;
 }
 
 .viewer-scroll {
-  flex: 1; overflow-y: auto; overflow-x: auto; min-height: 0;
-  display: flex; flex-direction: column; align-items: center;
-  padding: var(--sp-6) var(--sp-4); gap: var(--sp-5);
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--sp-6) var(--sp-4);
+  gap: var(--sp-5);
 }
 .viewer-page {
   background: #fff; box-shadow: var(--shadow-md); position: relative; flex-shrink: 0;
@@ -58,180 +91,311 @@
 .viewer-page .textLayer ::selection { background: rgba(108,92,231,0.35); }
 
 .annot-highlight {
-  position: absolute; background: rgba(255, 213, 79, 0.45); border-radius: 2px;
-  cursor: pointer; mix-blend-mode: multiply;
+  position: absolute; border-radius: 2px; cursor: pointer; mix-blend-mode: multiply;
 }
-.annot-highlight.color-yellow { background: rgba(255, 213, 79, 0.45); }
-.annot-highlight.color-green { background: rgba(90, 210, 150, 0.4); }
-.annot-highlight.color-blue { background: rgba(100, 170, 240, 0.4); }
-.annot-highlight.color-pink { background: rgba(240, 130, 180, 0.4); }
+.annot-highlight.color-yellow { background: rgba(255,213,79,0.45); }
+.annot-highlight.color-green  { background: rgba(90,210,150,0.4); }
+.annot-highlight.color-blue   { background: rgba(100,170,240,0.4); }
+.annot-highlight.color-pink   { background: rgba(240,130,180,0.4); }
 
 .annot-note-pin {
-  position: absolute; width: 22px; height: 22px; border-radius: var(--r-sm) var(--r-sm) var(--r-sm) 2px;
+  position: absolute; width: 22px; height: 22px;
+  border-radius: var(--r-sm) var(--r-sm) var(--r-sm) 2px;
   background: var(--warning); box-shadow: var(--shadow-sm); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; transform: translate(-2px, -2px);
+  display: flex; align-items: center; justify-content: center;
 }
 .annot-note-pin svg { width: 12px; height: 12px; color: #fff; }
 
 .annot-popover {
-  position: fixed; z-index: 40; background: var(--ink-950); color: #fff; border-radius: var(--r-md);
-  padding: var(--sp-2); display: flex; gap: 4px; box-shadow: var(--shadow-lg);
+  position: fixed; z-index: 200; background: var(--ink-950); color: #fff;
+  border-radius: var(--r-md); padding: var(--sp-2); display: flex;
+  gap: 4px; box-shadow: var(--shadow-lg);
 }
-.annot-popover button { width: 24px; height: 24px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center; }
+.annot-popover button {
+  width: 24px; height: 24px; border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+}
 .annot-popover button:hover { background: var(--ink-800); }
 .annot-color-dot { width: 16px; height: 16px; border-radius: var(--r-full); border: 2px solid rgba(255,255,255,0.3); }
-.annot-color-dot.yellow { background: #FFD54F; } .annot-color-dot.green { background: #5AD296; }
-.annot-color-dot.blue { background: #64AAF0; } .annot-color-dot.pink { background: #F082B4; }
+.annot-color-dot.yellow { background: #FFD54F; }
+.annot-color-dot.green  { background: #5AD296; }
+.annot-color-dot.blue   { background: #64AAF0; }
+.annot-color-dot.pink   { background: #F082B4; }
 
 .viewer-search {
   position: absolute; top: 60px; right: var(--sp-4); z-index: 30;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg); padding: var(--sp-2); display: flex; align-items: center; gap: var(--sp-2);
-  transform: translateY(-8px); opacity: 0; pointer-events: none; transition: all var(--dur-fast) var(--ease);
+  box-shadow: var(--shadow-lg); padding: var(--sp-2);
+  display: flex; align-items: center; gap: var(--sp-2);
+  transform: translateY(-8px); opacity: 0; pointer-events: none;
+  transition: all var(--dur-fast) var(--ease);
 }
 .viewer-search.open { transform: translateY(0); opacity: 1; pointer-events: auto; }
 .viewer-search input { border: none; outline: none; font-size: var(--text-sm); width: 160px; }
 .viewer-search__count { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-400); white-space: nowrap; }
 
-/* image / txt viewer */
-.simple-viewer { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-8); overflow: auto; min-height: 0; }
+/* simple viewers */
+.simple-viewer {
+  flex: 1; overflow: auto; display: flex;
+  align-items: center; justify-content: center; padding: var(--sp-8);
+}
 .simple-viewer img { max-width: 100%; max-height: 100%; border-radius: var(--r-md); box-shadow: var(--shadow-md); }
 .simple-viewer pre {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: var(--sp-6); max-width: 720px; width: 100%; font-family: var(--font-mono); font-size: var(--text-sm);
-  line-height: 1.7; white-space: pre-wrap; box-shadow: var(--shadow-sm);
+  padding: var(--sp-6); max-width: 720px; width: 100%;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.7;
+  white-space: pre-wrap; box-shadow: var(--shadow-sm);
 }
 
-/* ---------- Notebook / Markdown view (multi-page, scrollable, exportable) ---------- */
+/* ============================================================
+   NOTEBOOK — the scroll container IS the viewer minus toolbar.
+   No nested flex scroll traps. Dead simple.
+   ============================================================ */
+
+.notebook-outer {
+  /* sits directly under the toolbar, fills all remaining space */
+  position: absolute;
+  top: 52px; /* toolbar height */
+  left: 0; right: 0; bottom: 0;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  background: var(--surface-sunk);
+  -webkit-overflow-scrolling: touch;
+}
 
 .notebook-toolbar {
-  position: sticky; top: 0; z-index: 10; width: 100%; max-width: 720px;
-  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: 6px; margin-bottom: var(--sp-4); box-shadow: var(--shadow-sm);
-  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 16px;
+  box-shadow: var(--shadow-sm);
 }
 .notebook-toolbar__btn {
-  width: 30px; height: 30px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
   color: var(--text-700); font-family: var(--font-display); font-size: 13px; font-weight: 700;
 }
 .notebook-toolbar__btn svg { width: 15px; height: 15px; }
 .notebook-toolbar__btn:hover { background: var(--surface-sunk); }
-.notebook-toolbar__btn.active { background: var(--accent-soft); color: var(--accent-600); }
 .notebook-toolbar__sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
 .notebook-toolbar__colors { display: flex; align-items: center; gap: 4px; }
 .notebook-toolbar__color {
-  width: 20px; height: 20px; border-radius: var(--r-full); border: 2px solid transparent;
-  cursor: pointer; flex-shrink: 0;
+  width: 20px; height: 20px; border-radius: var(--r-full);
+  border: 2px solid transparent; cursor: pointer; flex-shrink: 0;
 }
-.notebook-toolbar__color:hover, .notebook-toolbar__color.active { border-color: var(--ink-900); }
-.notebook-toolbar__size { border: 1px solid var(--line-strong); border-radius: var(--r-sm); font-size: 12px; padding: 4px 6px; background: var(--surface); color: var(--text-700); }
-
-.notebook {
-  flex: 1; min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex; flex-direction: column; align-items: center;
-  padding: var(--sp-6) var(--sp-6) var(--sp-10);
-  background: var(--surface-sunk);
-  /* ensure this container IS the scroll parent, not a child */
-  position: relative;
+.notebook-toolbar__color:hover { border-color: var(--ink-900); }
+.notebook-toolbar__size {
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  font-size: 12px; padding: 4px 6px; background: var(--surface); color: var(--text-700);
 }
 
-.notebook__page {
-  width: 100%; max-width: 720px;
-  /* A4-like proportions: 720px wide → ~934px tall gives roughly A4 ratio */
-  min-height: 934px;
-  background: var(--paper);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-  margin-bottom: var(--sp-6);
-  flex-shrink: 0;
-  position: relative;
+/* pages wrapper — centered column */
+.notebook-pages {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  padding: 32px 24px 80px;
+  gap: 32px;
+  min-height: 100%;
 }
 
-.notebook__cover {
-  height: 130px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--sp-5) var(--sp-6);
-  position: relative; flex-shrink: 0;
+/* one A4-ish page */
+.notebook-page {
+  width: 100%;
+  max-width: 720px;
+  background: var(--paper);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(15,15,20,0.10), 0 1px 4px rgba(15,15,20,0.06);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  /* A4 ratio at 720px wide ≈ 1018px tall, but we let content decide min-height */
+  min-height: 900px;
+  overflow: visible;
 }
-.notebook__cover-icon {
-  position: absolute; top: var(--sp-5); left: var(--sp-6); font-size: 28px; line-height: 1;
-}
-.notebook__cover-title { font-family: var(--font-read); font-size: var(--text-xl); font-weight: 600; color: #fff; }
-.notebook__cover-meta { font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,0.75); margin-top: 4px; }
 
-.notebook__content-wrap {
-  flex: 1; display: flex; flex-direction: column;
+.notebook-page__cover {
+  border-radius: 12px 12px 0 0;
+  height: 140px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 20px 32px;
+  position: relative;
+}
+.notebook-page__cover-icon {
+  position: absolute; top: 20px; left: 32px; font-size: 28px; line-height: 1;
+}
+.notebook-page__cover-title {
+  font-family: var(--font-read); font-size: 1.4rem; font-weight: 600; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.notebook-page__cover-meta {
+  font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,0.75); margin-top: 4px;
 }
 
-.notebook__content {
-  padding: var(--sp-8) var(--sp-8) var(--sp-10);
-  font-family: var(--font-read); font-size: 1.05rem; line-height: 1.85; color: var(--text-900);
-  border-top: 1px solid var(--paper-line);
+.notebook-page__body {
   flex: 1;
+  padding: 40px 48px 48px;
+  border-top: 1px solid var(--paper-line);
+  font-family: var(--font-read);
+  font-size: 1.0rem;
+  line-height: 1.9;
+  color: var(--text-900);
+  outline: none;
+  cursor: text;
+  /* CRITICAL: no overflow hidden here — let content flow naturally */
 }
-.notebook__content h1 { font-family: var(--font-read); font-size: 1.7rem; margin: var(--sp-6) 0 var(--sp-3); font-weight: 700; }
-.notebook__content h2 { font-family: var(--font-read); font-size: 1.35rem; margin: var(--sp-6) 0 var(--sp-2); font-weight: 700; }
-.notebook__content h3 { font-family: var(--font-read); font-size: 1.15rem; margin: var(--sp-5) 0 var(--sp-2); font-weight: 700; }
-.notebook__content p { margin: 0 0 var(--sp-4); }
-.notebook__content ul, .notebook__content ol { margin: 0 0 var(--sp-4); padding-left: 1.4em; list-style: revert; }
-.notebook__content li { margin-bottom: 6px; }
-.notebook__content code { font-family: var(--font-mono); background: var(--paper-line); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
-.notebook__content pre { background: var(--ink-950); color: #E8E8ED; padding: var(--sp-4); border-radius: var(--r-md); overflow-x: auto; margin: 0 0 var(--sp-4); }
-.notebook__content pre code { background: none; padding: 0; color: inherit; }
-.notebook__content a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.notebook__content blockquote { border-left: 3px solid var(--accent); padding-left: var(--sp-4); color: var(--text-700); margin: 0 0 var(--sp-4); font-style: italic; }
-.notebook__content table { width: 100%; border-collapse: collapse; margin: 0 0 var(--sp-4); font-family: var(--font-body); font-size: 0.9em; }
-.notebook__content th, .notebook__content td { border: 1px solid var(--paper-line); padding: var(--sp-2) var(--sp-3); text-align: left; }
-.notebook__content th { background: rgba(0,0,0,0.02); font-weight: 700; }
-.notebook__content[contenteditable="true"] { outline: none; cursor: text; }
-.notebook__content[contenteditable="true"]:focus { box-shadow: inset 0 0 0 2px var(--accent-soft); border-radius: var(--r-md); }
+.notebook-page__body:focus {
+  box-shadow: inset 0 0 0 2px rgba(108,92,231,0.15);
+  border-radius: 0 0 12px 12px;
+}
 
-/* Page footer with page number */
-.notebook__page-footer {
-  padding: var(--sp-3) var(--sp-6);
+/* rich text styles inside the editable body */
+.notebook-page__body h1 { font-family: var(--font-read); font-size: 1.65rem; font-weight: 700; margin: 24px 0 10px; }
+.notebook-page__body h2 { font-family: var(--font-read); font-size: 1.3rem;  font-weight: 700; margin: 20px 0 8px; }
+.notebook-page__body h3 { font-family: var(--font-read); font-size: 1.1rem;  font-weight: 700; margin: 16px 0 6px; }
+.notebook-page__body p  { margin: 0 0 14px; }
+.notebook-page__body ul,
+.notebook-page__body ol { margin: 0 0 14px; padding-left: 1.5em; list-style: revert; }
+.notebook-page__body li { margin-bottom: 5px; }
+.notebook-page__body code {
+  font-family: var(--font-mono); background: var(--paper-line);
+  padding: 2px 6px; border-radius: 4px; font-size: 0.85em;
+}
+.notebook-page__body pre {
+  background: var(--ink-950); color: #E8E8ED; padding: 16px; border-radius: 10px;
+  overflow-x: auto; margin: 0 0 16px; font-family: var(--font-mono); font-size: 0.85em;
+}
+.notebook-page__body pre code { background: none; padding: 0; color: inherit; }
+.notebook-page__body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.notebook-page__body blockquote {
+  border-left: 3px solid var(--accent); padding-left: 16px;
+  color: var(--text-700); margin: 0 0 14px; font-style: italic;
+}
+.notebook-page__body table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 0.9em; }
+.notebook-page__body th, .notebook-page__body td {
+  border: 1px solid var(--paper-line); padding: 8px 12px; text-align: left;
+}
+.notebook-page__body th { background: rgba(0,0,0,0.02); font-weight: 700; }
+.notebook-page__body hr {
+  border: none; border-top: 1px solid var(--paper-line); margin: 24px 0;
+}
+
+.notebook-page__footer {
+  flex-shrink: 0;
+  padding: 12px 32px;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-400);
   border-top: 1px solid var(--paper-line);
-  flex-shrink: 0;
+  border-radius: 0 0 12px 12px;
 }
 
-/* Continuation page — no cover, just content */
-.notebook__page--continuation {
-  padding-top: 0;
-}
-.notebook__page--continuation .notebook__content {
-  border-top: none;
-  padding-top: var(--sp-6);
-}
-
+/* savebar */
 .notebook__savebar {
-  position: sticky; bottom: var(--sp-4); align-self: center;
-  display: flex; align-items: center; gap: var(--sp-2);
-  background: var(--ink-950); color: #fff; padding: 7px 14px; border-radius: var(--r-full);
-  font-size: var(--text-xs); box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease);
-  z-index: 15;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--ink-950); color: #fff;
+  padding: 7px 16px; border-radius: 999px;
+  font-size: var(--text-xs); box-shadow: var(--shadow-lg);
+  opacity: 0; pointer-events: none;
+  transition: opacity 120ms ease;
 }
 .notebook__savebar.show { opacity: 1; }
 .notebook__savebar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
 .notebook__savebar.saved .dot { background: var(--success); }
 
-/* ---------- Floating AI Magic trigger ---------- */
+/* AI FAB */
 .ai-fab {
-  position: absolute; bottom: var(--sp-6); right: var(--sp-6); z-index: 20;
-  display: flex; align-items: center; gap: var(--sp-2);
-  height: 46px; padding: 0 var(--sp-5); border-radius: var(--r-full);
+  position: fixed;
+  bottom: 24px; right: 24px; z-index: 50;
+  display: flex; align-items: center; gap: 8px;
+  height: 46px; padding: 0 20px; border-radius: 999px;
   background: linear-gradient(135deg, var(--accent), #4834D4); color: #fff;
   box-shadow: var(--shadow-glow); font-weight: 700; font-size: var(--text-sm);
-  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  transition: transform 120ms ease, box-shadow 120ms ease;
 }
 .ai-fab:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 12px 34px var(--accent-glow); }
 .ai-fab svg { width: 17px; height: 17px; }
 .ai-fab__spark { animation: fab-spark 2.4s ease-in-out infinite; }
-@keyframes fab-spark { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(-14deg) scale(1.12); } }
+@keyframes fab-spark {
+  0%,100% { transform: rotate(0deg) scale(1); }
+  50%      { transform: rotate(-14deg) scale(1.12); }
+}
+
+/* ============================================================
+   PRINT STYLESHEET — used by "Export PDF" (window.print())
+   Everything outside .notebook-pages is hidden; pages render
+   as real A4 pages with automatic browser page breaks.
+   ============================================================ */
+@media print {
+  /* hide everything by default */
+  body > * { display: none !important; }
+
+  /* show only the notebook content */
+  .notebook-print-root {
+    display: block !important;
+    position: static !important;
+  }
+
+  .notebook-toolbar,
+  .notebook__savebar,
+  .ai-fab,
+  .viewer-toolbar { display: none !important; }
+
+  .notebook-outer {
+    position: static !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  .notebook-pages {
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  .notebook-page {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    min-height: 100vh !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .notebook-page:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  .notebook-page__body {
+    font-size: 11pt !important;
+    line-height: 1.7 !important;
+    color: #000 !important;
+  }
+
+  .notebook-page__cover {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .notebook-page__body h1 { font-size: 20pt !important; }
+  .notebook-page__body h2 { font-size: 16pt !important; }
+  .notebook-page__body h3 { font-size: 13pt !important; }
+  .notebook-page__body code { background: #f0f0f0 !important; }
+  .notebook-page__body pre { background: #1a1a1a !important; color: #eee !important; }
+}
