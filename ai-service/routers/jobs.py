@@ -373,8 +373,10 @@ async def start_youtube_to_notes(
     return JobStartResponse(job_id=job_id)
 
 
+
 def _extract_video_id(url: str) -> Optional[str]:
     """Handle youtu.be/xxx, youtube.com/watch?v=xxx, youtube.com/embed/xxx, shorts/xxx."""
+    import re
     patterns = [
         r"(?:v=|/videos/|embed/|youtu\.be/|/v/|watch\?v=|/shorts/)([\w-]{11})",
         r"^([\w-]{11})$",  # raw ID
@@ -387,12 +389,6 @@ def _extract_video_id(url: str) -> Optional[str]:
 
 
 def _process_youtube_to_notes(job_id: str, body: YoutubeToNotesRequest):
-    from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import (
-        TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
-    )
-    from core.llm import chat_completion, MODEL_SUMMARIZATION
-
     try:
         _update_job(job_id, status="processing")
 
@@ -402,30 +398,20 @@ def _process_youtube_to_notes(job_id: str, body: YoutubeToNotesRequest):
             _fail_job(job_id, "Could not parse YouTube URL. Please paste a valid video link.")
             return
 
-        # 2. Fetch transcript
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US'])
-        except (TranscriptsDisabled, NoTranscriptFound):
-            _fail_job(job_id, "Transcript not available for this video.")
+        # 2. Fetch transcript — handle both old and new youtube-transcript-api APIs
+        full_transcript = _fetch_transcript(video_id)
+        if full_transcript is None:
+            # _fail_job already called inside _fetch_transcript
+            _fail_job(job_id, "Could not retrieve transcript for this video.")
             return
-        except VideoUnavailable:
-            _fail_job(job_id, "Video unavailable or private.")
-            return
-        except Exception as e:
-            _fail_job(job_id, f"Failed to fetch transcript: {e}")
-            return
-
-        # Concatenate transcript into plain text (drop timestamps for LLM)
-        full_transcript = " ".join(seg["text"] for seg in transcript_list)
-        # Cap length so we don't blow context window (~30k chars ≈ 7.5k tokens)
-        if len(full_transcript) > 30000:
-            full_transcript = full_transcript[:30000] + "\n\n[transcript truncated]"
 
         if len(full_transcript.strip()) < 100:
             _fail_job(job_id, "Transcript was too short to generate notes from.")
             return
 
         # 3. Generate notes
+        from core.llm import chat_completion, MODEL_SUMMARIZATION
+
         system = """You are an expert at turning video transcripts into clean, \
 well-structured study notes in Markdown. Extract the key ideas, organize them under \
 headings, and use bullets for details. Skip filler ("as you can see", "um", etc.). \
@@ -502,3 +488,56 @@ that captures the video's topic."""
     except Exception as e:
         logger.exception(f"YouTube-to-Notes job {job_id} crashed")
         _fail_job(job_id, f"Unexpected error: {e}")
+
+
+def _fetch_transcript(video_id: str) -> Optional[str]:
+    """
+    Fetch transcript text for a YouTube video.
+    Handles both youtube-transcript-api 0.6.x (legacy class-method API)
+    and the newer instance-based API introduced in 0.7+.
+    Returns concatenated transcript text, or None on failure.
+    """
+    # --- Strategy 1: new API (0.7+) ---
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        ytt = YouTubeTranscriptApi()
+        fetched = ytt.fetch(video_id, languages=["en", "en-US"])
+        # FetchedTranscript is iterable of snippet objects with .text
+        segments = list(fetched)
+        text = " ".join(
+            seg.text if hasattr(seg, "text") else seg["text"]
+            for seg in segments
+        )
+        if len(text) > 30000:
+            text = text[:30000] + "\n\n[transcript truncated]"
+        logger.info(f"Fetched transcript for {video_id} via new API ({len(text)} chars)")
+        return text
+    except TypeError:
+        # YouTubeTranscriptApi() can't be instantiated — old API, fall through
+        pass
+    except Exception as e:
+        err = str(e).lower()
+        if any(kw in err for kw in ("disabled", "unavailable", "no transcript", "private")):
+            logger.warning(f"Transcript unavailable for {video_id}: {e}")
+            return None
+        logger.warning(f"New API fetch failed for {video_id}, trying legacy: {e}")
+
+    # --- Strategy 2: legacy class-method API (0.6.x) ---
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id, languages=["en", "en-US"]
+        )
+        text = " ".join(seg["text"] for seg in transcript_list)
+        if len(text) > 30000:
+            text = text[:30000] + "\n\n[transcript truncated]"
+        logger.info(f"Fetched transcript for {video_id} via legacy API ({len(text)} chars)")
+        return text
+    except Exception as e:
+        err = str(e).lower()
+        if any(kw in err for kw in ("disabled", "unavailable", "no transcript", "private")):
+            logger.warning(f"Transcript unavailable for {video_id}: {e}")
+            return None
+        logger.error(f"Legacy API also failed for {video_id}: {e}")
+        return None
+
