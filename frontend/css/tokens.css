@@ -1,0 +1,107 @@
+/* ============================================================
+   DESIGN TOKENS
+   Studyforge — study/document workspace
+   Palette logic: dark "ink" chrome (nav/topbar) frames a warm
+   "paper" reading canvas. One accent (violet) is reserved for
+   AI actions only, so it stays meaningful instead of decorative.
+   ============================================================ */
+
+:root {
+  /* ---- Ink (dark chrome: sidebar, topbar, modals-on-dark) ---- */
+  --ink-950: #0E0E12;
+  --ink-900: #16161D;
+  --ink-850: #1B1B23;
+  --ink-800: #22222C;
+  --ink-700: #2C2C38;
+  --ink-600: #3A3A48;
+  --ink-400: #83838F;
+  --ink-200: #C7C7D1;
+  --ink-100: #EDEDF1;
+
+  /* ---- Canvas (light app surfaces) ---- */
+  --canvas: #F3F2EF;
+  --surface: #FFFFFF;
+  --surface-sunk: #F7F6F3;
+  --line: #E4E2DC;
+  --line-strong: #D6D3CA;
+
+  /* ---- Paper (reading / notebook canvas) ---- */
+  --paper: #FBF9F4;
+  --paper-line: #E9E4D8;
+
+  /* ---- Text on light ---- */
+  --text-900: #1A1A1F;
+  --text-700: #3F3F47;
+  --text-500: #6E6E78;
+  --text-400: #9A9AA2;
+
+  /* ---- Accent: violet, reserved for AI ---- */
+  --accent: #6C5CE7;
+  --accent-600: #5A4AD1;
+  --accent-soft: #EEEBFC;
+  --accent-glow: rgba(108, 92, 231, 0.35);
+
+  /* ---- Semantic ---- */
+  --success: #1BA672;
+  --success-soft: #E6F6EF;
+  --danger: #E0433D;
+  --danger-soft: #FCEAE9;
+  --warning: #C9820A;
+  --warning-soft: #FBF0DD;
+  --info: #2678C9;
+  --info-soft: #E9F2FB;
+
+  /* ---- Type ---- */
+  --font-display: 'Sora', 'Inter', -apple-system, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-read: 'Source Serif 4', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --text-xs: 0.72rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.625rem;
+  --text-2xl: 2.1rem;
+
+  /* ---- Space ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* ---- Radius ---- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-full: 999px;
+
+  /* ---- Shadow ---- */
+  --shadow-sm: 0 1px 2px rgba(15, 15, 20, 0.06);
+  --shadow-md: 0 4px 16px rgba(15, 15, 20, 0.08), 0 1px 3px rgba(15,15,20,0.06);
+  --shadow-lg: 0 12px 40px rgba(15, 15, 20, 0.14), 0 2px 6px rgba(15,15,20,0.08);
+  --shadow-glow: 0 8px 28px var(--accent-glow);
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 340ms;
+
+  /* ---- Layout ---- */
+  --rail-w: 68px;
+  --sidebar-w: 260px;
+  --topbar-h: 56px;
+  --ai-panel-w: 380px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; }
+}

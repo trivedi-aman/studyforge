@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>Studyforge — Agentic Multi-Modal Content Transformation Pipeline</title>
+<meta name="description" content="Read, write, and think alongside your documents — folders, a full study viewer, and AI that's only ever a click away." />
+
+<!-- Type: Sora (UI/display), Inter (body/dense UI), Source Serif 4 (reading/notebook canvas), JetBrains Mono (metadata) -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<link rel="stylesheet" href="css/tokens.css" />
+<link rel="stylesheet" href="css/base.css" />
+<link rel="stylesheet" href="css/layout.css" />
+<link rel="stylesheet" href="css/components.css" />
+<link rel="stylesheet" href="css/auth.css" />
+<link rel="stylesheet" href="css/viewer.css" />
+<link rel="stylesheet" href="css/ai-panel.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<!-- PDF.js — document viewer rendering engine -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- jsPDF — generates the mock/demo PDF preview until the real backend serves actual files -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- marked — Markdown → HTML for the AI-generated notes notebook view -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
