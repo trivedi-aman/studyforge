@@ -22,9 +22,16 @@ export async function renderShellChrome(root) {
 
   renderRail();
   renderSidebarShell();
-  const folders = await Folders.list();
-  set({ folders });
-  renderTree();
+  try {
+    const folders = await Folders.list();
+    set({ folders });
+    renderTree();
+    busEmit('sf:folders-loaded', { folders });
+  } catch (err) {
+    console.error('Failed to load folders:', err);
+    toast('Could not load folders — check your connection.', 'danger');
+    throw err;  // let mountWorkspace catch auth errors
+  }
 
   root.querySelector('#sidebar-toggle').addEventListener('click', () => {
     set({ sidebarCollapsed: !state.sidebarCollapsed });

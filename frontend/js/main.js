@@ -36,12 +36,11 @@ function mountAuth() {
   renderAuthScreen(app, () => mountWorkspace());
 }
 
-function mountWorkspace() {
+async function mountWorkspace() {
   set({ view: 'workspace' });
   app.innerHTML = `<div class="shell" id="shell"></div>`;
   const shell = document.getElementById('shell');
 
-  // The main column now has a content area + AI panel side by side
   shell.innerHTML = `
     <div id="chrome-mount" style="display:contents;"></div>
     <div class="main" id="main-mount">
@@ -50,7 +49,21 @@ function mountWorkspace() {
     </div>
   `;
 
-  renderShellChrome(document.getElementById('chrome-mount'));
+  // Await chrome (which loads folders) BEFORE mounting the grid,
+  // so refresh() sees the real folder list on first render.
+  try {
+    await renderShellChrome(document.getElementById('chrome-mount'));
+  } catch (err) {
+    console.error('Failed to load workspace chrome:', err);
+    // If auth is bad, kick back to login
+    if (String(err.message).includes('401') || String(err.message).includes('403')) {
+      localStorage.removeItem('sf_access_token');
+      localStorage.removeItem('sf_user');
+      mountAuth();
+      return;
+    }
+  }
+
   initFileGrid(document.getElementById('main-content-area'));
   initAiPanel(document.getElementById('ai-panel'));
 

@@ -1,6 +1,6 @@
 """
 PPTX → HTML for previewing generated presentations inside Studyforge.
-Same logic as main backend's converter but standalone.
+Mirrors backend/core/converter.py logic — same visual output.
 """
 import base64
 import io
@@ -68,7 +68,8 @@ def _render_shape(shape, sw, sh):
     except Exception:
         pass
 
-    if shape.shape_type == 13:  # picture
+    # Picture
+    if shape.shape_type == 13:
         try:
             b = shape.image.blob
             ct = shape.image.content_type or "image/png"
@@ -77,9 +78,11 @@ def _render_shape(shape, sw, sh):
         except Exception:
             return ""
 
+    # Text frame
     if shape.has_text_frame:
         return f'<div class="shape shape-text" style="{pos}{fill_style}">{_text_frame_html(shape.text_frame, sw)}</div>'
 
+    # Plain filled shape (accent bars, etc.)
     if fill_style:
         return f'<div class="shape" style="{pos}{fill_style}"></div>'
     return ""
@@ -97,10 +100,17 @@ def _text_frame_html(tf, slide_w_emu):
             if not text:
                 continue
             styles = []
+
+            # Font size — as a % of slide width (via cqw)
+            # If no size on run, use a sensible default of 18pt equivalent
             if run.font.size:
                 pt = run.font.size.pt
-                slide_pt = slide_w_emu / 12700
-                styles.append(f"font-size:{(pt/slide_pt)*100:.3f}cqw")
+            else:
+                pt = 18  # fallback default
+            slide_w_pt = slide_w_emu / 12700
+            pct = (pt / slide_w_pt) * 100
+            styles.append(f"font-size:{pct:.3f}cqw")
+
             if run.font.bold:
                 styles.append("font-weight:700")
             if run.font.italic:
@@ -137,6 +147,7 @@ body{{background:#f3f2ef;padding:24px;font-family:'Calibri','Segoe UI',Arial,san
 .slide{{position:relative;width:100%;aspect-ratio:var(--slide-w)/var(--slide-h);background:white;box-shadow:0 4px 24px rgba(0,0,0,0.12);border-radius:6px;overflow:hidden;container-type:inline-size}}
 .shape{{position:absolute;overflow:hidden}}
 .shape-text{{padding:0.4cqw;display:flex;flex-direction:column;justify-content:flex-start}}
-.shape-text p{{line-height:1.25;margin:0 0 0.25em 0}}
+.shape-text p{{line-height:1.25;margin:0 0 0.25em 0;font-size:2.2cqw}}
+.shape-text span{{display:inline}}
 .shape-image img{{width:100%;height:100%;object-fit:contain;display:block}}
 </style></head><body>{body}</body></html>"""

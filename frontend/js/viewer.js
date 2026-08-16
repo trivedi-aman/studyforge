@@ -1107,11 +1107,10 @@ async function renderHtmlViewer(body, doc) {
           <div class="empty-state__icon">${TYPE_ICON[doc.file_type] || Icon.file}</div>
           <div class="empty-state__title">Loading preview…</div>
         </div>
-        <iframe
-          id="html-frame"
-          style="display:none; width:100%; height:100%; border:0; background:#f3f2ef;"
-          sandbox="allow-same-origin"
-        ></iframe>
+      <iframe
+        id="html-frame"
+        style="display:none; width:100%; height:100%; border:0; background:#f3f2ef;"
+      ></iframe>
       </div>
       <button class="ai-fab" id="ai-fab-btn">
         <span class="ai-fab__spark">${Icon.sparkles}</span> AI Magic

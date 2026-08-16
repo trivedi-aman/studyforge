@@ -58,6 +58,7 @@ export const Auth = {
     if (MOCK_MODE) {
       await wait(150);
       localStorage.setItem('sf_access_token', 'mock-jwt-token');
+      localStorage.setItem('sf_user', JSON.stringify(mockUser));
       localStorage.setItem('sf_display_name', email.split('@')[0]);
       return { user: clone(mockUser), access_token: 'mock-jwt-token' };
     }
@@ -65,10 +66,10 @@ export const Auth = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    // Store token immediately after signup
     if (data.access_token) {
       localStorage.setItem('sf_access_token', data.access_token);
-      localStorage.setItem('sf_display_name', email.split('@')[0]);
+      localStorage.setItem('sf_user', JSON.stringify(data.user));
+      localStorage.setItem('sf_display_name', data.user?.name || email.split('@')[0]);
     }
     return data;
   },
@@ -76,26 +77,37 @@ export const Auth = {
     if (MOCK_MODE) {
       await wait(150);
       localStorage.setItem('sf_access_token', 'mock-jwt-token');
+      localStorage.setItem('sf_user', JSON.stringify(mockUser));
       return { user: clone(mockUser), access_token: 'mock-jwt-token' };
     }
     const data = await realFetch('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    // Store token immediately after login
     if (data.access_token) {
       localStorage.setItem('sf_access_token', data.access_token);
-      localStorage.setItem('sf_display_name', data.user?.email?.split('@')[0] || '');
+      localStorage.setItem('sf_user', JSON.stringify(data.user));
+      localStorage.setItem('sf_display_name', data.user?.name || data.user?.email?.split('@')[0] || '');
     }
     return data;
   },
   async signOut() {
     localStorage.removeItem('sf_access_token');
+    localStorage.removeItem('sf_user');
+    localStorage.removeItem('sf_display_name');
     if (!MOCK_MODE) return realFetch('/auth/logout', { method: 'POST' });
   },
   currentSession() {
     const token = localStorage.getItem('sf_access_token');
-    return token ? { user: clone(mockUser), access_token: token } : null;
+    if (!token) return null;
+    const userStr = localStorage.getItem('sf_user');
+    let user;
+    try {
+      user = userStr ? JSON.parse(userStr) : clone(mockUser);
+    } catch {
+      user = clone(mockUser);
+    }
+    return { user, access_token: token };
   },
   updateProfile(patch) {
     if (patch.name) localStorage.setItem('sf_display_name', patch.name);

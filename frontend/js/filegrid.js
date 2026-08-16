@@ -48,48 +48,70 @@ function getBreadcrumbChain() {
 }
 
 async function refresh(searchQuery = null) {
-  renderTopbarActions();
   const body = root.querySelector('#main-body');
-  const crumbs = root.querySelector('#breadcrumbs');
+  try {
+    renderTopbarActions();
+    const crumbs = root.querySelector('#breadcrumbs');
 
-  if (searchQuery) {
-    crumbs.innerHTML = `<span class="topbar__crumb current">Search: "${escapeHtml(searchQuery)}"</span>`;
-    const results = await Documents.search(searchQuery);
-    renderCanvas(body, { title: `"${searchQuery}"`, meta: `${results.length} result${results.length === 1 ? '' : 's'}`, folders: [], documents: results, isSearch: true });
-    return;
+    if (searchQuery) {
+      crumbs.innerHTML = `<span class="topbar__crumb current">Search: "${escapeHtml(searchQuery)}"</span>`;
+      const results = await Documents.search(searchQuery);
+      renderCanvas(body, {
+        title: `"${searchQuery}"`,
+        meta: `${results.length} result${results.length === 1 ? '' : 's'}`,
+        folders: [],
+        documents: results,
+        isSearch: true,
+      });
+      return;
+    }
+
+    if (state.activeNav === 'favorites') {
+      crumbs.innerHTML = `<span class="topbar__crumb current">Favorites</span>`;
+      const docs = await Documents.listFavorites();
+      renderCanvas(body, {
+        title: 'Favorites',
+        meta: `${docs.length} item${docs.length === 1 ? '' : 's'}`,
+        folders: [],
+        documents: docs,
+      });
+      return;
+    }
+
+    // Files nav
+    const chain = getBreadcrumbChain();
+    const crumbItems = [
+      `<span class="topbar__crumb ${!chain.length ? 'current' : ''}" data-crumb="root" style="cursor:pointer;">All Files</span>`,
+      ...chain.map((f, i) =>
+        `<span class="topbar__sep">${Icon.chevRight}</span>
+         <span class="topbar__crumb ${i === chain.length - 1 ? 'current' : ''}" data-crumb="${f.id}" style="cursor:pointer;">${escapeHtml(f.name)}</span>`
+      ),
+    ];
+    crumbs.innerHTML = crumbItems.join('');
+    crumbs.querySelectorAll('[data-crumb]').forEach((el) => {
+      el.addEventListener('click', () => selectFolder(el.dataset.crumb === 'root' ? null : el.dataset.crumb));
+    });
+
+    const subfolders = state.folders.filter((f) => f.parent_folder_id === state.currentFolderId);
+    const documents = await Documents.listByFolder(state.currentFolderId);
+    const title = chain.length ? chain[chain.length - 1].name : 'All Files';
+    renderCanvas(body, {
+      title,
+      meta: `${subfolders.length + documents.length} item${subfolders.length + documents.length === 1 ? '' : 's'}`,
+      folders: subfolders,
+      documents,
+    });
+  } catch (err) {
+    console.error('File grid refresh failed:', err);
+    body.innerHTML = `
+      <div class="empty-state" style="height:100%;">
+        <div class="empty-state__icon">${Icon.info}</div>
+        <div class="empty-state__title">Couldn't load your files</div>
+        <div class="empty-state__desc">${escapeHtml(err.message || 'Something went wrong. Try refreshing.')}</div>
+      </div>`;
   }
-
-  if (state.activeNav === 'favorites') {
-    crumbs.innerHTML = `<span class="topbar__crumb current">Favorites</span>`;
-    const docs = await Documents.listFavorites();
-    renderCanvas(body, { title: 'Favorites', meta: `${docs.length} item${docs.length === 1 ? '' : 's'}`, folders: [], documents: docs });
-    return;
-  }
-
-  // Files nav
-  const chain = getBreadcrumbChain();
-  const crumbItems = [
-    `<span class="topbar__crumb ${!chain.length ? 'current' : ''}" data-crumb="root" style="cursor:pointer;">All Files</span>`,
-    ...chain.map((f, i) =>
-      `<span class="topbar__sep">${Icon.chevRight}</span>
-       <span class="topbar__crumb ${i === chain.length - 1 ? 'current' : ''}" data-crumb="${f.id}" style="cursor:pointer;">${escapeHtml(f.name)}</span>`
-    ),
-  ];
-  crumbs.innerHTML = crumbItems.join('');
-  crumbs.querySelectorAll('[data-crumb]').forEach((el) => {
-    el.addEventListener('click', () => selectFolder(el.dataset.crumb === 'root' ? null : el.dataset.crumb));
-  });
-
-  const subfolders = state.folders.filter((f) => f.parent_folder_id === state.currentFolderId);
-  const documents = await Documents.listByFolder(state.currentFolderId);
-  const title = chain.length ? chain[chain.length - 1].name : 'All Files';
-  renderCanvas(body, {
-    title,
-    meta: `${subfolders.length + documents.length} item${subfolders.length + documents.length === 1 ? '' : 's'}`,
-    folders: subfolders,
-    documents,
-  });
 }
+
 
 function renderTopbarActions() {
   const el = root.querySelector('#topbar-actions');

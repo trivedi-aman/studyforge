@@ -158,11 +158,10 @@
    ============================================================ */
 
 .notebook-outer {
-  /* sits directly under the toolbar, fills all remaining space */
   position: absolute;
-  top: 52px; /* toolbar height */
+  top: 0;
   left: 0; right: 0; bottom: 0;
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: hidden;
   background: var(--surface-sunk);
   -webkit-overflow-scrolling: touch;
