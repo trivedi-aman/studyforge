@@ -91,12 +91,17 @@
 .viewer-page .textLayer ::selection { background: rgba(108,92,231,0.35); }
 
 .annot-highlight {
-  position: absolute; border-radius: 2px; cursor: pointer; mix-blend-mode: multiply;
+  position: absolute;
+  border-radius: 2px;
+  cursor: pointer;
+  mix-blend-mode: multiply;
+  opacity: 0.55;                    /* was implicit 1.0 */
+  pointer-events: auto;
 }
-.annot-highlight.color-yellow { background: rgba(255,213,79,0.45); }
-.annot-highlight.color-green  { background: rgba(90,210,150,0.4); }
-.annot-highlight.color-blue   { background: rgba(100,170,240,0.4); }
-.annot-highlight.color-pink   { background: rgba(240,130,180,0.4); }
+.annot-highlight.color-yellow { background: #FFE066; }
+.annot-highlight.color-green  { background: #7EE2A8; }
+.annot-highlight.color-blue   { background: #77B6F5; }
+.annot-highlight.color-pink   { background: #F49CC2; }
 
 .annot-note-pin {
   position: absolute; width: 22px; height: 22px;

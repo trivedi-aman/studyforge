@@ -60,11 +60,12 @@ export async function openDocument(docId) {
     renderImageViewer(body, doc);
   } else if (doc.file_type === 'txt') {
     renderTextViewer(body, doc);
-  } else if (
-    ['docx', 'pptx', 'xlsx'].includes(doc.file_type) &&
-    !doc.preview_pdf_s3_key
-  ) {
-    renderNoPreviewYet(body, doc);
+  } else if (['docx', 'pptx', 'xlsx'].includes(doc.file_type)) {
+    if (!doc.preview_pdf_s3_key) {
+      renderNoPreviewYet(body, doc);
+    } else {
+      await renderHtmlViewer(body, doc);
+    }
   } else {
     await renderPdfViewer(body, doc);
   }
@@ -813,7 +814,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
 
   const range = sel.getRangeAt(0);
 
-  // Check the selection is actually inside this page's text layer
   const textLayer = pageEl.querySelector('.textLayer');
   if (!textLayer) return;
   if (!textLayer.contains(range.startContainer) && !textLayer.contains(range.endContainer)) return;
@@ -826,60 +826,63 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   const pageRect = pageEl.getBoundingClientRect();
   const selectedText = sel.toString();
 
-  // Deduplicate rects — PDF.js text layer often generates overlapping
-  // spans that produce duplicate/near-duplicate rects for the same text
-  const seen = new Set();
-  const uniqueRects = rawRects.filter((r) => {
-    // Round to nearest pixel to catch near-duplicates
-    const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  // Convert to relative coords
-  const relRects = uniqueRects.map((r) => ({
-    relX: (r.left - pageRect.left) / pageRect.width,
-    relY: (r.top - pageRect.top) / pageRect.height,
-    relW: r.width / pageRect.width,
-    relH: r.height / pageRect.height,
-    absTop: r.top,
-    absLeft: r.left,
+  // ---------- Step 1: group rects by visual line ----------
+  // Use vertical MIDPOINT, not top edge — bold/italic runs have
+  // different top/bottom but the same center as surrounding text.
+  const rectsWithMid = rawRects.map((r) => ({
+    left: r.left,
+    top: r.top,
+    right: r.right,
+    bottom: r.bottom,
+    width: r.width,
+    height: r.height,
+    midY: r.top + r.height / 2,
   }));
 
-  // Merge into lines — rects within same vertical band are one line
-  // Use a threshold based on actual rect height (much more robust than fixed 3px)
-  const avgHeight = relRects.reduce((s, r) => s + r.relH, 0) / relRects.length;
-  const lineThreshold = avgHeight * 0.5; // half a line height
+  // Sort by vertical position then horizontal
+  rectsWithMid.sort((a, b) => a.midY - b.midY || a.left - b.left);
 
-  const lineGroups = [];
-  const sorted = [...relRects].sort((a, b) => a.absTop - b.absTop || a.absLeft - b.absLeft);
-
-  for (const rect of sorted) {
-    let merged = false;
-    for (const group of lineGroups) {
-      // Check if this rect is on the same line as the group
-      const groupAvgY = group.reduce((s, r) => s + r.relY, 0) / group.length;
-      if (Math.abs(rect.relY - groupAvgY) < lineThreshold) {
-        group.push(rect);
-        merged = true;
+  const lines = [];
+  for (const r of rectsWithMid) {
+    // Try to fit into an existing line
+    let placed = false;
+    for (const line of lines) {
+      // A rect belongs to a line if its midpoint is within 60% of
+      // the line's average height from the line's average midpoint
+      const threshold = Math.max(line.avgHeight, r.height) * 0.6;
+      if (Math.abs(r.midY - line.avgMidY) < threshold) {
+        line.rects.push(r);
+        // Update running averages
+        line.avgMidY = line.rects.reduce((s, x) => s + x.midY, 0) / line.rects.length;
+        line.avgHeight = line.rects.reduce((s, x) => s + x.height, 0) / line.rects.length;
+        placed = true;
         break;
       }
     }
-    if (!merged) lineGroups.push([rect]);
+    if (!placed) {
+      lines.push({
+        rects: [r],
+        avgMidY: r.midY,
+        avgHeight: r.height,
+      });
+    }
   }
 
-  // Collapse each line group into a single bounding rect
-  const lineRects = lineGroups.map((group) => {
-    const minX = Math.min(...group.map((r) => r.relX));
-    const maxRight = Math.max(...group.map((r) => r.relX + r.relW));
-    const minY = Math.min(...group.map((r) => r.relY));
-    const maxBottom = Math.max(...group.map((r) => r.relY + r.relH));
+  // ---------- Step 2: collapse each line into ONE bounding rect ----------
+  // This is the key: one rect per line, spanning from leftmost to rightmost,
+  // using union of top/bottom. This eliminates all duplicate/offset issues
+  // because bold spans get merged into the line they belong to.
+  const lineRects = lines.map((line) => {
+    const minLeft = Math.min(...line.rects.map((r) => r.left));
+    const maxRight = Math.max(...line.rects.map((r) => r.right));
+    const minTop = Math.min(...line.rects.map((r) => r.top));
+    const maxBottom = Math.max(...line.rects.map((r) => r.bottom));
+
     return {
-      relX: minX,
-      relY: minY,
-      relW: maxRight - minX,
-      relH: maxBottom - minY,
+      relX: (minLeft - pageRect.left) / pageRect.width,
+      relY: (minTop - pageRect.top) / pageRect.height,
+      relW: (maxRight - minLeft) / pageRect.width,
+      relH: (maxBottom - minTop) / pageRect.height,
     };
   });
 
@@ -968,7 +971,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   }, 0);
 }
 
-
 function renderNoPreviewYet(body, doc) {
   body.innerHTML = `
     <div class="viewer">
@@ -1002,4 +1004,72 @@ function renderNoPreviewYet(body, doc) {
     ?.addEventListener('click', () => downloadOriginal(doc));
   body.querySelector('#no-preview-replace')
     ?.addEventListener('click', () => promptReplaceFile(doc));
+}
+
+
+
+
+async function renderHtmlViewer(body, doc) {
+  body.innerHTML = `
+    <div class="viewer" id="html-viewer-root">
+      <div class="viewer-toolbar">
+        <div class="viewer-toolbar__filename">
+          ${TYPE_ICON[doc.file_type] || Icon.file}
+          <span>${escapeHtml(doc.filename)}</span>
+          <span class="badge badge--tag" style="margin-left:6px;">Converted preview</span>
+        </div>
+        <div class="viewer-toolbar__group">
+          <button class="btn btn--ghost btn--sm" id="html-download">
+            ${Icon.download} Download original
+          </button>
+        </div>
+      </div>
+      <div style="flex:1; overflow:hidden; position:relative; background:#f3f2ef;">
+        <div id="html-loading" class="empty-state" style="height:100%;">
+          <div class="empty-state__icon">${TYPE_ICON[doc.file_type] || Icon.file}</div>
+          <div class="empty-state__title">Loading preview…</div>
+        </div>
+        <iframe
+          id="html-frame"
+          style="display:none; width:100%; height:100%; border:0; background:#f3f2ef;"
+          sandbox="allow-same-origin"
+        ></iframe>
+      </div>
+      <button class="ai-fab" id="ai-fab-btn">
+        <span class="ai-fab__spark">${Icon.sparkles}</span> AI Magic
+      </button>
+    </div>
+  `;
+
+  body.querySelector('#ai-fab-btn').addEventListener('click', () => openAiPanel(doc.id));
+  body.querySelector('#html-download').addEventListener('click', () => downloadOriginal(doc));
+
+  try {
+    // Get the presigned URL to the HTML preview
+    const res = await fetch(`${MAIN_BACKEND_URL}/documents/${doc.id}/view-url`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('sf_access_token')}` },
+    });
+    if (!res.ok) throw new Error(`Failed to load preview URL: ${res.status}`);
+    const { url } = await res.json();
+
+    // Fetch the HTML itself (not iframe src) so we can inject it and avoid CORS
+    const htmlRes = await fetch(url);
+    if (!htmlRes.ok) throw new Error(`Failed to load preview content: ${htmlRes.status}`);
+    const html = await htmlRes.text();
+
+    const frame = body.querySelector('#html-frame');
+    const loading = body.querySelector('#html-loading');
+
+    // Use srcdoc — no CORS, no separate network call for parsing
+    frame.srcdoc = html;
+    frame.style.display = 'block';
+    loading.style.display = 'none';
+  } catch (err) {
+    console.error('HTML viewer failed:', err);
+    body.querySelector('#html-loading').innerHTML = `
+      <div class="empty-state__icon">${TYPE_ICON[doc.file_type] || Icon.file}</div>
+      <div class="empty-state__title">Preview failed to load</div>
+      <div class="empty-state__desc">${escapeHtml(err.message)}</div>
+    `;
+  }
 }

@@ -10,7 +10,7 @@ from core.config import get_settings
 from models.document import DocumentOut, DocumentUpdate
 from pydantic import BaseModel
 from fastapi.responses import PlainTextResponse
-from core.converter import convert_to_pdf, is_convertible
+from core.converter import convert_to_html, is_convertible
 
 
 
@@ -141,19 +141,17 @@ async def upload_document(
     upload_file(original_key, data, file.content_type or "application/octet-stream")
 
     # ---- LibreOffice conversion for DOCX/PPTX/XLSX ----
+        # ---- HTML conversion for DOCX/PPTX/XLSX ----
     preview_pdf_key = None
     if is_convertible(file_type):
-        pdf_bytes = convert_to_pdf(data, file.filename or f"file{ext}")
-        if pdf_bytes:
-            preview_pdf_key = f"users/{user_id}/uploads/{doc_id}/v1/preview.pdf"
-            upload_file(preview_pdf_key, pdf_bytes, "application/pdf")
+        html_str = convert_to_html(data, file.filename or f"file{ext}")
+        if html_str:
+            preview_pdf_key = f"users/{user_id}/uploads/{doc_id}/v1/preview.html"
+            upload_file(preview_pdf_key, html_str.encode("utf-8"), "text/html; charset=utf-8")
         else:
-            # Conversion failed — log it but don't block the upload.
-            # The file is still saved; user can download it, just no preview.
             import logging
             logging.getLogger(__name__).warning(
-                f"Preview PDF generation failed for {file.filename} — "
-                f"upload succeeded but preview will not be available."
+                f"HTML preview generation failed for {file.filename}"
             )
 
     db = get_service_db()
@@ -301,10 +299,10 @@ async def replace_file(
     new_preview_key = None
 
     if is_convertible(new_file_type):
-        pdf_bytes = convert_to_pdf(data, file.filename or f"file{ext}")
-        if pdf_bytes:
-            new_preview_key = f"users/{user_id}/uploads/{doc_id}/v{new_version}/preview.pdf"
-            upload_file(new_preview_key, pdf_bytes, "application/pdf")
+        html_str = convert_to_html(data, file.filename or f"file{ext}")
+        if html_str:
+            new_preview_key = f"users/{user_id}/uploads/{doc_id}/v{new_version}/preview.html"
+            upload_file(new_preview_key, html_str.encode("utf-8"), "text/html; charset=utf-8")
 
     # Insert new version row
     db.table("document_versions").insert({
