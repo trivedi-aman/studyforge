@@ -81,6 +81,7 @@ def _process_text_to_ppt(job_id: str, body: TextToPptRequest):
     """Background task: generate outline via Groq, render .pptx, upload, create doc row."""
     try:
         _update_job(job_id, status="processing")
+        logger.info(f"Text-to-PPT job {job_id}: template={body.template}, font={body.font}, theme={body.theme}")
 
         # 1. Generate outline via LLM
         outline = _generate_slide_outline(body.topic_or_text, body.slide_count)
@@ -162,6 +163,8 @@ def _process_text_to_ppt(job_id: str, body: TextToPptRequest):
     except Exception as e:
         logger.exception(f"Text-to-PPT job {job_id} crashed")
         _fail_job(job_id, f"Unexpected error: {e}")
+
+
 def _generate_slide_outline(topic_or_text: str, slide_count: Optional[int]) -> dict:
     """Ask Groq to produce structured JSON with slide headings + bullets."""
     slide_hint = f"exactly {slide_count} slides" if slide_count else "5-8 slides"
@@ -349,10 +352,6 @@ async def get_job_status(job_id: str, _: bool = Depends(verify_service_key)):
         raise HTTPException(status_code=404, detail="Job not found")
     return res.data[0]
 
-
-
-
-
 # ============================================================
 # /jobs/youtube-to-notes
 # ============================================================
@@ -372,8 +371,6 @@ async def start_youtube_to_notes(
     background_tasks.add_task(_process_youtube_to_notes, job_id, body)
     return JobStartResponse(job_id=job_id)
 
-
-
 def _extract_video_id(url: str) -> Optional[str]:
     """Handle youtu.be/xxx, youtube.com/watch?v=xxx, youtube.com/embed/xxx, shorts/xxx."""
     import re
@@ -386,7 +383,6 @@ def _extract_video_id(url: str) -> Optional[str]:
         if m:
             return m.group(1)
     return None
-
 
 def _process_youtube_to_notes(job_id: str, body: YoutubeToNotesRequest):
     try:

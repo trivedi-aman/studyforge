@@ -319,58 +319,6 @@ def _docx_css() -> str:
 # ============================================================
 # PPTX → HTML (rendered as one card per slide)
 # ============================================================
-def _pptx_to_html(file_bytes: bytes) -> str:
-    from pptx import Presentation
-    from pptx.util import Emu
-
-    prs = Presentation(io.BytesIO(file_bytes))
-
-    slide_w_emu = prs.slide_width or Emu(9144000)
-    slide_h_emu = prs.slide_height or Emu(6858000)
-
-    # Convert EMU to pixels at 96 DPI baseline
-    # PPT slides are typically 10" wide (960 EMU units per inch × 9525)
-    # Standard 16:9: 13.33" × 7.5"
-    slide_w_px = int(slide_w_emu / 9525)
-    slide_h_px = int(slide_h_emu / 9525)
-
-    slides_html = []
-
-    for idx, slide in enumerate(prs.slides, 1):
-        # Slide background
-        bg_style = "background: white;"
-        try:
-            bg = slide.background
-            if bg and bg.fill and bg.fill.type is not None:
-                fc = bg.fill.fore_color
-                if fc and fc.rgb:
-                    bg_style = f"background: #{fc.rgb};"
-        except Exception:
-            pass
-
-        shape_html_parts = []
-        for shape in slide.shapes:
-            part = _render_pptx_shape(shape, slide_w_emu, slide_h_emu, slide_w_px)
-            if part:
-                shape_html_parts.append(part)
-
-        slides_html.append(f"""
-        <div class="slide-wrap">
-          <div class="slide-num">Slide {idx}</div>
-          <div class="slide" style="{bg_style}">
-            {''.join(shape_html_parts)}
-          </div>
-        </div>
-        """)
-
-    body = f"""
-    <div class="slides-container" style="--slide-w:{slide_w_px}px; --slide-h:{slide_h_px}px;">
-      {''.join(slides_html)}
-    </div>
-    """
-    logger.info(f"PPTX → HTML: {len(prs.slides)} slides ({slide_w_px}×{slide_h_px})")
-    return _wrap_html(body, css=_pptx_css())
-
 
 def _render_pptx_shape(shape, slide_w_emu, slide_h_emu, slide_w_px) -> str:
     if not hasattr(shape, "left") or shape.left is None:
@@ -520,87 +468,6 @@ def _render_pptx_text_frame(text_frame, shape_width_emu, slide_w_emu, slide_w_px
     return "".join(paragraphs)
 
 
-def _pptx_css() -> str:
-    return """
-    body {
-      background: #f3f2ef;
-      margin: 0;
-      padding: 24px;
-      font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
-    }
-    .slides-container {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 28px;
-    }
-    .slide-wrap {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .slide-num {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      color: #6e6e78;
-      padding: 0 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .slide {
-      position: relative;
-      width: 100%;
-      aspect-ratio: var(--slide-w) / var(--slide-h);
-      background: white;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
-      border-radius: 6px;
-      overflow: hidden;
-      container-type: inline-size;   /* enables cqw units for font-size */
-    }
-    .shape {
-      position: absolute;
-      overflow: hidden;
-    }
-    .shape-text {
-      padding: 0.4cqw;
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-start;
-    }
-    .shape-text p {
-      line-height: 1.25;
-      margin: 0 0 0.25em 0;
-    }
-    .shape-image img {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      display: block;
-    }
-    .shape-table {
-      background: white;
-    }
-    .shape-table table {
-      width: 100%;
-      height: 100%;
-      border-collapse: collapse;
-      font-size: 1.2cqw;
-      table-layout: fixed;
-    }
-    .shape-table td {
-      border: 1px solid #ccc;
-      padding: 0.3cqw 0.6cqw;
-      vertical-align: top;
-      overflow: hidden;
-    }
-    .shape-table tr:first-child td {
-      background: #f0f0f0;
-      font-weight: 600;
-    }
-    """
-# ============================================================
 # XLSX → HTML
 # ============================================================
 def _xlsx_to_html(file_bytes: bytes) -> str:
@@ -672,3 +539,308 @@ html, body {{ margin: 0; padding: 0; }}
 {body_html}
 </body>
 </html>"""
+
+
+
+
+
+
+
+
+
+# ============================================================
+# PPTX → HTML — native pixel sizing + transform scale
+# Same strategy as ai-service/services/pptx_to_html.py
+# ============================================================
+def _pptx_to_html(file_bytes: bytes) -> str:
+    from pptx import Presentation
+    from pptx.util import Emu
+
+    prs = Presentation(io.BytesIO(file_bytes))
+
+    slide_w_emu = prs.slide_width or Emu(9144000)
+    slide_h_emu = prs.slide_height or Emu(6858000)
+
+    # EMU → pixels at 96 DPI (1 inch = 914400 EMU = 96 px)
+    slide_w_px = slide_w_emu * 96 / 914400
+    slide_h_px = slide_h_emu * 96 / 914400
+
+    slides_html = []
+
+    for idx, slide in enumerate(prs.slides, 1):
+        bg_style = "background:#ffffff;"
+        try:
+            bg = slide.background
+            if bg and bg.fill and bg.fill.type is not None:
+                fc = bg.fill.fore_color
+                if fc and fc.rgb:
+                    bg_style = f"background:#{fc.rgb};"
+        except Exception:
+            pass
+
+        shape_html_parts = []
+        for shape in slide.shapes:
+            part = _render_pptx_shape_px(shape)
+            if part:
+                shape_html_parts.append(part)
+
+        slides_html.append(f"""
+        <div class="slide-wrap">
+          <div class="slide-num">Slide {idx}</div>
+          <div class="slide-scaler">
+            <div class="slide" style="{bg_style} width:{slide_w_px:.1f}px; height:{slide_h_px:.1f}px;">
+              {''.join(shape_html_parts)}
+            </div>
+          </div>
+        </div>
+        """)
+
+    body = f'<div class="slides-container">{"".join(slides_html)}</div>'
+    logger.info(f"PPTX → HTML: {len(prs.slides)} slides ({slide_w_px:.0f}×{slide_h_px:.0f})")
+    return _wrap_pptx_html(body, slide_w_px, slide_h_px)
+
+
+def _render_pptx_shape_px(shape) -> str:
+    """Render one shape at its native pixel position/size."""
+    if not hasattr(shape, "left") or shape.left is None:
+        return ""
+
+    left_px = shape.left * 96 / 914400
+    top_px = shape.top * 96 / 914400
+    w_px = shape.width * 96 / 914400
+    h_px = shape.height * 96 / 914400
+
+    pos = f"left:{left_px:.1f}px;top:{top_px:.1f}px;width:{w_px:.1f}px;height:{h_px:.1f}px;"
+
+    fill_style = ""
+    try:
+        if hasattr(shape, "fill") and shape.fill and shape.fill.type is not None:
+            fc = shape.fill.fore_color
+            if fc and fc.rgb:
+                fill_style = f"background-color:#{fc.rgb};"
+    except Exception:
+        pass
+
+    # Picture
+    if shape.shape_type == 13:
+        try:
+            img_bytes = shape.image.blob
+            ct = shape.image.content_type or "image/png"
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            return (
+                f'<div class="shape shape-image" style="{pos}">'
+                f'<img src="data:{ct};base64,{b64}" />'
+                f'</div>'
+            )
+        except Exception:
+            return ""
+
+    # Table
+    if shape.has_table:
+        try:
+            rows_html = []
+            for row in shape.table.rows:
+                cells = []
+                for cell in row.cells:
+                    cell_text = html_module.escape(cell.text or "")
+                    cells.append(f"<td>{cell_text or '&nbsp;'}</td>")
+                rows_html.append(f"<tr>{''.join(cells)}</tr>")
+            return (
+                f'<div class="shape shape-table" style="{pos}">'
+                f'<table>{"".join(rows_html)}</table>'
+                f'</div>'
+            )
+        except Exception:
+            return ""
+
+    # Text frame
+    if shape.has_text_frame:
+        paragraphs_html = _render_pptx_text_frame_px(shape.text_frame)
+        return (
+            f'<div class="shape shape-text" style="{pos}{fill_style}">'
+            f'{paragraphs_html}'
+            f'</div>'
+        )
+
+    # Plain filled shape (accent bars, sidebars, etc.)
+    if fill_style:
+        return f'<div class="shape shape-fill" style="{pos}{fill_style}"></div>'
+
+    return ""
+
+
+def _render_pptx_text_frame_px(text_frame) -> str:
+    """Render text frame with pixel-based font sizes."""
+    paragraphs = []
+
+    for para in text_frame.paragraphs:
+        if not para.runs:
+            paragraphs.append('<p style="margin:0;">&nbsp;</p>')
+            continue
+
+        runs_html = []
+        for run in para.runs:
+            text = html_module.escape(run.text or "").replace("\n", "<br>")
+            if not text:
+                continue
+
+            styles = []
+
+            # Font size in pixels (1 pt = 1.333 px at 96 DPI)
+            pt_size = run.font.size.pt if run.font.size else 18
+            px_size = pt_size * 1.333
+            styles.append(f"font-size:{px_size:.1f}px")
+
+            if run.font.bold:
+                styles.append("font-weight:700")
+            if run.font.italic:
+                styles.append("font-style:italic")
+            if run.font.underline:
+                styles.append("text-decoration:underline")
+
+            try:
+                if run.font.color and run.font.color.type is not None:
+                    if run.font.color.rgb:
+                        styles.append(f"color:#{run.font.color.rgb}")
+            except Exception:
+                pass
+
+            if run.font.name:
+                styles.append(f"font-family:'{run.font.name}','Calibri',sans-serif")
+
+            style_attr = f' style="{"; ".join(styles)}"' if styles else ""
+            runs_html.append(f'<span{style_attr}>{text}</span>')
+
+        # Paragraph alignment
+        para_styles = ["margin:0", "line-height:1.25"]
+        if para.alignment is not None:
+            align_map = {1: "center", 2: "right", 3: "justify"}
+            if para.alignment in align_map:
+                para_styles.append(f"text-align:{align_map[para.alignment]}")
+
+        # Level → indentation (for bullet levels)
+        if para.level and para.level > 0:
+            para_styles.append(f"padding-left:{para.level * 18}px")
+
+        paragraphs.append(
+            f'<p style="{"; ".join(para_styles)};">'
+            f'{"".join(runs_html) or "&nbsp;"}'
+            f'</p>'
+        )
+
+    return "".join(paragraphs)
+
+
+def _wrap_pptx_html(body: str, slide_w_px: float, slide_h_px: float) -> str:
+    """Wrap PPTX preview HTML with CSS and transform-scale JS."""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; }}
+body {{
+  background: #f3f2ef;
+  padding: 24px;
+  font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+}}
+.slides-container {{
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}}
+.slide-wrap {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}}
+.slide-num {{
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #6e6e78;
+  padding: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}}
+.slide-scaler {{
+  width: 100%;
+  aspect-ratio: {slide_w_px:.0f} / {slide_h_px:.0f};
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+  background: white;
+}}
+.slide {{
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}}
+.shape {{
+  position: absolute;
+  overflow: hidden;
+}}
+.shape-text {{
+  padding: 4px;
+}}
+.shape-text p {{
+  margin: 0;
+  line-height: 1.25;
+}}
+.shape-text span {{ display: inline; }}
+.shape-image img {{
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}}
+.shape-table {{
+  background: white;
+}}
+.shape-table table {{
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}}
+.shape-table td {{
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  vertical-align: top;
+  overflow: hidden;
+  font-size: 14px;
+}}
+.shape-table tr:first-child td {{
+  background: #f0f0f0;
+  font-weight: 600;
+}}
+</style>
+</head>
+<body>
+{body}
+<script>
+function scaleSlides() {{
+  const NATIVE_W = {slide_w_px:.0f};
+  document.querySelectorAll('.slide-scaler').forEach(scaler => {{
+    const slide = scaler.querySelector('.slide');
+    if (!slide) return;
+    const scale = scaler.clientWidth / NATIVE_W;
+    slide.style.transform = 'scale(' + scale + ')';
+  }});
+}}
+scaleSlides();
+window.addEventListener('resize', scaleSlides);
+if (document.fonts) {{
+  document.fonts.ready.then(scaleSlides);
+}}
+</script>
+</body>
+</html>"""
+
+
