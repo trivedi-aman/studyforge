@@ -14,7 +14,14 @@ import { openAiPanel } from './ai-panel.js';
 
 const TYPE_ICON = { pdf: Icon.filePdf, pptx: Icon.fileSlides, docx: Icon.file, xlsx: Icon.file, image: Icon.fileImage, txt: Icon.file, md: Icon.notes };
 
+// Module-level cleanup registry — ensures we never leak observers or state
+// across document opens.
+let _cleanup = null;
+
 export async function openDocument(docId) {
+  // Run any cleanup from the previously open document
+  if (_cleanup) { _cleanup(); _cleanup = null; }
+
   const doc = await Documents.get(docId);
   if (!doc) { toast('Could not open that document', 'danger'); return; }
   set({ selectedDocument: doc });
@@ -24,11 +31,14 @@ export async function openDocument(docId) {
   const body = document.querySelector('#main-body');
 
   crumbs.innerHTML = `
-    <span class="topbar__crumb" id="viewer-back" style="display:flex;align-items:center;gap:6px;">${Icon.arrowLeft} Back</span>
+    <span class="topbar__crumb" id="viewer-back" style="cursor:pointer;display:flex;align-items:center;gap:6px;">${Icon.arrowLeft} Back</span>
     <span class="topbar__sep">${Icon.chevRight}</span>
     <span class="topbar__crumb current" style="display:flex;align-items:center;gap:6px;">${TYPE_ICON[doc.file_type] || Icon.file}${escapeHtml(doc.filename)}</span>
   `;
-  crumbs.querySelector('#viewer-back').addEventListener('click', () => busEmit('sf:nav-changed', {}));
+  crumbs.querySelector('#viewer-back').addEventListener('click', () => {
+    if (_cleanup) { _cleanup(); _cleanup = null; }
+    busEmit('sf:nav-changed', {});
+  });
 
   topActions.innerHTML = `
     <button class="btn btn--accent btn--sm" id="ai-magic-topbtn">${Icon.sparkles} AI Magic</button>
@@ -60,14 +70,14 @@ export async function openDocument(docId) {
 
 function buildFileActionsMenu(doc) {
   return [
-    { label: 'Document info', icon: Icon.info, onClick: () => showDocInfo(doc) },
-    { label: 'Download original', icon: Icon.download, onClick: () => toast(`Downloading ${doc.filename}…`, 'info') },
-    { label: 'Version history', icon: Icon.history, onClick: () => showVersionHistory(doc) },
+    { label: 'Document info', icon: Icon.info, action: 'info', onClick: () => showDocInfo(doc) },
+    { label: 'Download original', icon: Icon.download, action: 'download', onClick: () => toast(`Downloading ${doc.filename}…`, 'info') },
+    { label: 'Version history', icon: Icon.history, action: 'history', onClick: () => showVersionHistory(doc) },
     { type: 'sep' },
-    { label: 'Replace file', icon: Icon.upload, onClick: () => promptReplaceFile(doc) },
-    { label: 'Rename', icon: Icon.edit, onClick: () => toast('Use the file grid context menu to rename for now', 'info') },
+    { label: 'Replace file', icon: Icon.upload, action: 'replace', onClick: () => promptReplaceFile(doc) },
+    { label: 'Rename', icon: Icon.edit, action: 'rename', onClick: () => toast('Use the file grid context menu to rename', 'info') },
     { type: 'sep' },
-    { label: 'Delete', icon: Icon.trash, danger: true, onClick: () => confirmDelete(doc) },
+    { label: 'Delete', icon: Icon.trash, action: 'delete', danger: true, onClick: () => confirmDelete(doc) },
   ];
 }
 
@@ -92,7 +102,7 @@ async function showVersionHistory(doc) {
   const rows = versions.slice().reverse().map((v) => `
     <div style="display:flex; align-items:center; justify-content:space-between; padding: 10px 0; border-bottom: 1px solid var(--line);">
       <div>
-        <div style="font-weight:600; font-size: var(--text-sm);">Version ${v.version_number} ${v.version_number === doc.current_version ? '<span class="badge badge--accent" style=\"margin-left:6px;\">Current</span>' : ''}</div>
+        <div style="font-weight:600; font-size: var(--text-sm);">Version ${v.version_number} ${v.version_number === doc.current_version ? '<span class="badge badge--accent" style="margin-left:6px;">Current</span>' : ''}</div>
         <div style="font-size: var(--text-xs); color: var(--text-500); font-family: var(--font-mono);">${formatDate(v.uploaded_at)} · ${formatBytes(v.file_size_bytes)}</div>
       </div>
       ${v.version_number !== doc.current_version ? `<button class="btn btn--ghost btn--sm" data-restore="${v.version_number}">Restore</button>` : ''}
@@ -116,7 +126,7 @@ async function showVersionHistory(doc) {
 function promptReplaceFile(doc) {
   const { el, close } = openModal({
     title: 'Replace file',
-    subtitle: 'This creates a new version — the current version stays in history and can be restored later.',
+    subtitle: 'This creates a new version — the current version stays in history.',
     bodyHTML: `<div class="dropzone" id="replace-dropzone">${Icon.upload}<div>Click to choose a new file</div></div><input type="file" id="replace-input" style="display:none" />`,
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button>`,
   });
@@ -134,7 +144,7 @@ function promptReplaceFile(doc) {
 function confirmDelete(doc) {
   const { close } = openModal({
     title: `Delete "${doc.filename}"?`,
-    subtitle: 'This can\'t be undone.',
+    subtitle: "This can't be undone.",
     bodyHTML: '',
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn" id="vdel-confirm" style="background:var(--danger); color:#fff;">Delete</button>`,
   });
@@ -152,7 +162,10 @@ function confirmDelete(doc) {
 function renderImageViewer(body, doc) {
   body.innerHTML = `
     <div class="viewer">
-      <div class="viewer-toolbar"><div class="viewer-toolbar__filename">${Icon.fileImage}<span>${escapeHtml(doc.filename)}</span></div><div></div></div>
+      <div class="viewer-toolbar">
+        <div class="viewer-toolbar__filename">${Icon.fileImage}<span>${escapeHtml(doc.filename)}</span></div>
+        <div></div>
+      </div>
       <div class="simple-viewer">${placeholderImageSvg(doc.filename)}</div>
     </div>`;
 }
@@ -169,7 +182,10 @@ function placeholderImageSvg(name) {
 function renderTextViewer(body, doc) {
   body.innerHTML = `
     <div class="viewer">
-      <div class="viewer-toolbar"><div class="viewer-toolbar__filename">${Icon.file}<span>${escapeHtml(doc.filename)}</span></div><div></div></div>
+      <div class="viewer-toolbar">
+        <div class="viewer-toolbar__filename">${Icon.file}<span>${escapeHtml(doc.filename)}</span></div>
+        <div></div>
+      </div>
       <div class="simple-viewer"><pre>Plain-text preview of ${escapeHtml(doc.filename)}.
 
 This is a stand-in for the real file content, rendered exactly as uploaded — no formatting, no conversion needed for .txt files.</pre></div>
@@ -177,11 +193,18 @@ This is a stand-in for the real file content, rendered exactly as uploaded — n
 }
 
 // ============================================================
-// PDF viewer (also used for docx/pptx/xlsx via normalized preview PDF)
+// PDF viewer
 // ============================================================
-let pdfState = null; // { pdf, doc, scale, matches, matchIndex, textCache }
+
+// Single PDF state object — always reset before a new document loads.
+// Keeping it module-level (rather than closure-local) lets toolbar
+// callbacks and annotation handlers reach it without prop-drilling.
+let pdfState = null;
 
 async function renderPdfViewer(body, doc) {
+  // Reset state fully before rendering a new document
+  pdfState = null;
+
   body.innerHTML = `
     <div class="viewer" id="pdf-viewer-root">
       <div class="viewer-toolbar">
@@ -190,10 +213,14 @@ async function renderPdfViewer(body, doc) {
           <div class="viewer-toolbar__sep"></div>
           <button class="icon-btn" id="tb-prev" title="Previous page">${Icon.chevLeft}</button>
           <input class="viewer-toolbar__pageinput" id="tb-pagenum" value="1" />
-          <span class="viewer-toolbar__pagetotal">/ <span id="tb-total">1</span></span>
+          <span class="viewer-toolbar__pagetotal">/ <span id="tb-total">—</span></span>
           <button class="icon-btn" id="tb-next" title="Next page">${Icon.chevRight}</button>
         </div>
-        <div class="viewer-toolbar__filename">${TYPE_ICON[doc.file_type] || Icon.filePdf}<span>${escapeHtml(doc.filename)}</span>${doc.file_type !== 'pdf' ? '<span class="badge badge--tag" style="margin-left:6px;">Converted preview</span>' : ''}</div>
+        <div class="viewer-toolbar__filename">
+          ${TYPE_ICON[doc.file_type] || Icon.filePdf}
+          <span>${escapeHtml(doc.filename)}</span>
+          ${doc.file_type !== 'pdf' ? '<span class="badge badge--tag" style="margin-left:6px;">Converted preview</span>' : ''}
+        </div>
         <div class="viewer-toolbar__group">
           <button class="icon-btn" id="tb-zoomout" title="Zoom out">${Icon.zoomOut}</button>
           <span class="viewer-toolbar__zoom" id="tb-zoomlevel">100%</span>
@@ -202,334 +229,569 @@ async function renderPdfViewer(body, doc) {
           <button class="icon-btn" id="tb-fullscreen" title="Full screen">${Icon.fullscreen}</button>
         </div>
       </div>
+
       <div class="viewer-search" id="viewer-search">
         <input type="text" id="search-input" placeholder="Search in document…" />
         <span class="viewer-toolbar__sep"></span>
         <button class="icon-btn" id="search-prev" title="Previous match">${Icon.chevLeft}</button>
-        <span class="viewer-search__count" id="search-count">0/0</span>
+        <span class="viewer-search__count" id="search-count">0 / 0</span>
         <button class="icon-btn" id="search-next" title="Next match">${Icon.chevRight}</button>
-        <button class="icon-btn" id="search-close" title="Close">${Icon.close}</button>
+        <button class="icon-btn" id="search-close" title="Close search">${Icon.close}</button>
       </div>
+
       <div class="viewer-body">
         <div class="viewer-thumbs" id="viewer-thumbs"></div>
-        <div class="viewer-scroll" id="viewer-scroll"></div>
+        <div class="viewer-scroll" id="viewer-scroll">
+          <div class="empty-state" style="height:100%;">
+            <div class="empty-state__icon">${Icon.filePdf}</div>
+            <div class="empty-state__title">Loading document…</div>
+          </div>
+        </div>
       </div>
       <button class="ai-fab" id="ai-fab-btn"><span class="ai-fab__spark">${Icon.sparkles}</span> AI Magic</button>
     </div>
   `;
 
-  const root = body.querySelector('#pdf-viewer-root');
-  root.querySelector('#ai-fab-btn').addEventListener('click', () => openAiPanel(doc.id));
+  const viewerRoot = body.querySelector('#pdf-viewer-root');
+  viewerRoot.querySelector('#ai-fab-btn').addEventListener('click', () => openAiPanel(doc.id));
 
+  // Load the PDF
   const url = await loadPdfUrl(doc);
   const pdfjsLib = window.pdfjsLib;
+
   let pdf;
   try {
-    pdf = await pdfjsLib.getDocument(url).promise;
+    const loadingTask = pdfjsLib.getDocument(url);
+    pdf = await loadingTask.promise;
   } catch (err) {
-    root.querySelector('#viewer-scroll').innerHTML = `<div class="empty-state"><div class="empty-state__icon">${Icon.filePdf}</div><div class="empty-state__title">Couldn't load preview</div><div class="empty-state__desc">The document preview failed to load. Try again in a moment.</div></div>`;
+    console.error('PDF load error:', err);
+    viewerRoot.querySelector('#viewer-scroll').innerHTML = `
+      <div class="empty-state" style="height:100%;">
+        <div class="empty-state__icon">${Icon.filePdf}</div>
+        <div class="empty-state__title">Couldn't load preview</div>
+        <div class="empty-state__desc">${escapeHtml(err.message || 'The document failed to load.')}</div>
+      </div>`;
     return;
   }
 
-  pdfState = { pdf, doc, scale: 1.1, matches: [], matchIndex: -1, textCache: {} };
-  root.querySelector('#tb-total').textContent = pdf.numPages;
+  // Initialise state AFTER successful load
+  pdfState = {
+    pdf,
+    doc,
+    scale: 1.2,
+    matches: [],       // page numbers that contain the search term
+    matchIndex: -1,
+    textCache: {},     // pageNum -> plain text string
+    observer: null,    // IntersectionObserver — stored so we can disconnect on cleanup
+    rendering: false,  // guard against concurrent rescale calls
+  };
 
-  await renderAllPages(root);
-  await renderThumbnails(root);
-  wireToolbar(root, doc);
-  await loadAndRenderAnnotations(root, doc);
-  observeCurrentPage(root);
+  viewerRoot.querySelector('#tb-total').textContent = pdf.numPages;
+
+  // Hide thumb rail for single-page docs
+  if (pdf.numPages === 1) {
+    viewerRoot.querySelector('#viewer-thumbs').style.display = 'none';
+  }
+
+  await renderAllPages(viewerRoot);
+  renderThumbnails(viewerRoot);   // fire-and-forget — thumbs render async in background
+  wireToolbar(viewerRoot, doc);
+  wirePageObserver(viewerRoot);
+  await loadAndRenderAnnotations(viewerRoot, doc);
+
+  // Register cleanup so the next openDocument() call tears everything down
+  _cleanup = () => {
+    if (pdfState?.observer) { pdfState.observer.disconnect(); }
+    pdfState = null;
+  };
 }
 
 async function loadPdfUrl(doc) {
   if (MOCK_MODE) return generateMockPdfUrl(doc);
-  return `${S3_PUBLIC_BASE_URL}/${doc.preview_pdf_s3_key || doc.original_s3_key}`;
+  // Real mode: prefer the normalized preview PDF; fall back to the original
+  const key = doc.preview_pdf_s3_key || doc.original_s3_key;
+  return `${S3_PUBLIC_BASE_URL}/${key}`;
 }
 
 function generateMockPdfUrl(doc) {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+
   const pages = [
-    { h: doc.filename.replace(/\.[^.]+$/, ''), body: [
-      'This is a demo preview standing in for the real document content — in the working app this pane renders the actual uploaded or converted PDF.',
-      'The viewer itself is fully functional: page navigation, zoom, thumbnails, in-document search, text selection, and highlight/sticky-note annotations all work against this generated PDF exactly as they would against a real one.',
-    ]},
-    { h: 'Section 1 — Overview', body: [
-      'Once the real backend is wired up, this content is replaced by the actual normalized PDF served from S3 (original PDFs served directly; DOCX/PPTX/XLSX converted server-side via LibreOffice headless).',
-      'Try selecting a line of this text — a small toolbar appears letting you highlight it in one of four colors, or leave a sticky note.',
-    ]},
-    { h: 'Section 2 — Try the tools', body: [
-      'Use the search icon in the toolbar to search this document — try searching for "annotations" or "zoom".',
-      'The thumbnail rail on the left lets you jump straight to any page. The AI Magic button in the corner opens the AI panel scoped to this exact document.',
-    ]},
+    {
+      h: doc.filename.replace(/\.[^.]+$/, ''),
+      body: [
+        'This is a demo preview — in the real app this renders the actual uploaded or converted PDF from S3.',
+        'The viewer is fully functional: navigation, zoom, thumbnails, in-document search, text selection, and highlight/sticky-note annotations all work against this generated PDF exactly as they will against real files.',
+      ],
+    },
+    {
+      h: 'Section 1 — Navigation & Zoom',
+      body: [
+        'Use the arrow buttons in the toolbar to move between pages, or click any thumbnail in the left rail.',
+        'Zoom in and out with the magnifier buttons. The page number input also accepts direct entry — type a number and press Enter.',
+      ],
+    },
+    {
+      h: 'Section 2 — Search & Annotations',
+      body: [
+        'Click the search icon to open the in-document search bar. Try searching for "annotations" or "zoom" — matching pages are highlighted in the counter.',
+        'Select any text on this page — a small toolbar appears letting you highlight it in one of four colours, add a sticky note, or explain it with AI.',
+      ],
+    },
+    {
+      h: 'Section 3 — AI Magic',
+      body: [
+        'The purple "AI Magic" button in the bottom-right corner opens the AI panel scoped to this document. Nothing runs automatically — every AI call is explicit.',
+        'From the panel you can ask questions about this document, get a summary, explain selected text, or generate structured Markdown study notes.',
+      ],
+    },
   ];
+
   pages.forEach((p, i) => {
     if (i > 0) pdf.addPage();
-    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(20);
-    pdf.text(p.h, 56, 80);
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11.5);
-    let y = 120;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(18);
+    pdf.text(p.h, 56, 72);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(11);
+    let y = 110;
     p.body.forEach((para) => {
-      const lines = pdf.splitTextToSize(para, 480);
+      const lines = pdf.splitTextToSize(para, 484);
       pdf.text(lines, 56, y);
-      y += lines.length * 16 + 18;
+      y += lines.length * 17 + 20;
     });
-    pdf.setFontSize(9); pdf.setTextColor(150);
-    pdf.text(`Page ${i + 1}`, 290, 800);
+    pdf.setFontSize(9);
+    pdf.setTextColor(150);
+    pdf.text(`Page ${i + 1} of ${pages.length}`, 284, 810, { align: 'center' });
     pdf.setTextColor(0);
   });
-  const blob = pdf.output('blob');
-  return URL.createObjectURL(blob);
+
+  return URL.createObjectURL(pdf.output('blob'));
 }
 
-async function renderAllPages(root) {
-  const scroll = root.querySelector('#viewer-scroll');
+// ---- Page rendering ----
+
+async function renderAllPages(viewerRoot) {
+  const scroll = viewerRoot.querySelector('#viewer-scroll');
   scroll.innerHTML = '';
+
   const { pdf, scale } = pdfState;
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
+  const devicePixelRatio = window.devicePixelRatio || 1;
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale });
+
+    // Outer wrapper — sized in CSS pixels
     const pageEl = document.createElement('div');
     pageEl.className = 'viewer-page';
-    pageEl.dataset.page = i;
+    pageEl.dataset.page = pageNum;
     pageEl.style.width = `${viewport.width}px`;
     pageEl.style.height = `${viewport.height}px`;
 
+    // Canvas — rendered at device pixel ratio for sharp text on HiDPI screens
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.width; canvas.height = viewport.height;
+    canvas.width = Math.floor(viewport.width * devicePixelRatio);
+    canvas.height = Math.floor(viewport.height * devicePixelRatio);
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+
     const ctx = canvas.getContext('2d');
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+
     await page.render({ canvasContext: ctx, viewport }).promise;
     pageEl.appendChild(canvas);
 
+    // Text layer — transparent overlay for selection & search
     const textLayerDiv = document.createElement('div');
     textLayerDiv.className = 'textLayer';
+    textLayerDiv.style.cssText = `width:${viewport.width}px; height:${viewport.height}px;`;
     pageEl.appendChild(textLayerDiv);
 
+    // Extract plain text for search cache
     try {
       const textContent = await page.getTextContent();
-      pdfState.textCache[i] = textContent.items.map((it) => it.str).join(' ');
-      if (window.pdfjsLib.renderTextLayer) {
-        await window.pdfjsLib.renderTextLayer({ textContentSource: textContent, container: textLayerDiv, viewport }).promise;
-      }
-    } catch (e) { /* text layer optional — canvas still renders */ }
+      pdfState.textCache[pageNum] = textContent.items.map((it) => it.str).join(' ');
 
+      // pdf.js 3.x text layer API
+      const textLayerObj = new pdfjsLib.renderTextLayer({
+        textContentSource: textContent,
+        container: textLayerDiv,
+        viewport,
+      });
+      await textLayerObj.promise;
+    } catch (textErr) {
+      // Text layer is optional — canvas render already succeeded
+      console.warn(`Text layer page ${pageNum}:`, textErr);
+    }
+
+    // Annotation layer — pointer-events on; sits above text layer
     const annotLayer = document.createElement('div');
     annotLayer.className = 'annot-layer';
     annotLayer.style.cssText = 'position:absolute; inset:0; pointer-events:none;';
     pageEl.appendChild(annotLayer);
 
-    pageEl.addEventListener('mouseup', () => handleTextSelection(pageEl, i));
+    // Wire text selection → annotation popover
+    pageEl.addEventListener('mouseup', () => handleTextSelection(viewerRoot, pageEl, pageNum));
 
     scroll.appendChild(pageEl);
   }
 }
 
-async function renderThumbnails(root) {
-  const thumbsEl = root.querySelector('#viewer-thumbs');
+// Thumbnails rendered at a low scale asynchronously — don't await in the main flow
+async function renderThumbnails(viewerRoot) {
+  const thumbsEl = viewerRoot.querySelector('#viewer-thumbs');
   thumbsEl.innerHTML = '';
   const { pdf } = pdfState;
+  const THUMB_SCALE = 0.18;
+
   for (let i = 1; i <= pdf.numPages; i++) {
+    // Guard: viewer might have been torn down while thumbs were rendering
+    if (!pdfState || pdfState.pdf !== pdf) return;
+
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 0.22 });
+    const vp = page.getViewport({ scale: THUMB_SCALE });
+
     const thumb = document.createElement('div');
     thumb.className = `viewer-thumb ${i === 1 ? 'active' : ''}`;
     thumb.dataset.page = i;
+
     const canvas = document.createElement('canvas');
-    canvas.width = viewport.width; canvas.height = viewport.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    canvas.width = vp.width;
+    canvas.height = vp.height;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     thumb.appendChild(canvas);
-    thumb.innerHTML += `<span class="viewer-thumb__num">${i}</span>`;
-    thumb.addEventListener('click', () => jumpToPage(root, i));
+
+    const numLabel = document.createElement('span');
+    numLabel.className = 'viewer-thumb__num';
+    numLabel.textContent = i;
+    thumb.appendChild(numLabel);
+
+    thumb.addEventListener('click', () => jumpToPage(viewerRoot, i));
     thumbsEl.appendChild(thumb);
   }
 }
 
-function jumpToPage(root, n) {
-  const el = root.querySelector(`.viewer-page[data-page="${n}"]`);
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function jumpToPage(viewerRoot, n) {
+  const el = viewerRoot.querySelector(`.viewer-page[data-page="${n}"]`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function wireToolbar(root, doc) {
-  const pageInput = root.querySelector('#tb-pagenum');
-  root.querySelector('#tb-prev').addEventListener('click', () => {
-    const cur = Number(pageInput.value) || 1;
-    if (cur > 1) jumpToPage(root, cur - 1);
-  });
-  root.querySelector('#tb-next').addEventListener('click', () => {
-    const cur = Number(pageInput.value) || 1;
-    if (cur < pdfState.pdf.numPages) jumpToPage(root, cur + 1);
-  });
-  pageInput.addEventListener('change', () => {
-    const n = Math.min(Math.max(1, Number(pageInput.value) || 1), pdfState.pdf.numPages);
-    jumpToPage(root, n);
+// ---- Toolbar wiring ----
+
+function wireToolbar(viewerRoot, doc) {
+  const pageInput = viewerRoot.querySelector('#tb-pagenum');
+
+  viewerRoot.querySelector('#tb-prev').addEventListener('click', () => {
+    const cur = parseInt(pageInput.value, 10) || 1;
+    if (cur > 1) jumpToPage(viewerRoot, cur - 1);
   });
 
-  const zoomInBtn = root.querySelector('#tb-zoomin');
-  const zoomOutBtn = root.querySelector('#tb-zoomout');
-  zoomInBtn.addEventListener('click', () => rescale(root, Math.min(pdfState.scale + 0.15, 2.4), zoomInBtn, zoomOutBtn));
-  zoomOutBtn.addEventListener('click', () => rescale(root, Math.max(pdfState.scale - 0.15, 0.5), zoomInBtn, zoomOutBtn));
-  root.querySelector('#tb-fullscreen').addEventListener('click', () => {
-    if (!document.fullscreenElement) root.requestFullscreen?.();
+  viewerRoot.querySelector('#tb-next').addEventListener('click', () => {
+    const cur = parseInt(pageInput.value, 10) || 1;
+    if (pdfState && cur < pdfState.pdf.numPages) jumpToPage(viewerRoot, cur + 1);
+  });
+
+  pageInput.addEventListener('change', () => {
+    if (!pdfState) return;
+    const n = Math.min(Math.max(1, parseInt(pageInput.value, 10) || 1), pdfState.pdf.numPages);
+    pageInput.value = n;
+    jumpToPage(viewerRoot, n);
+  });
+
+  // Zoom
+  viewerRoot.querySelector('#tb-zoomin').addEventListener('click', () => {
+    if (!pdfState || pdfState.rendering) return;
+    rescale(viewerRoot, Math.min(pdfState.scale + 0.2, 3.0));
+  });
+  viewerRoot.querySelector('#tb-zoomout').addEventListener('click', () => {
+    if (!pdfState || pdfState.rendering) return;
+    rescale(viewerRoot, Math.max(pdfState.scale - 0.2, 0.4));
+  });
+
+  // Fullscreen
+  viewerRoot.querySelector('#tb-fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) viewerRoot.requestFullscreen?.();
     else document.exitFullscreen?.();
   });
 
-  const searchBar = root.querySelector('#viewer-search');
-  root.querySelector('#tb-search').addEventListener('click', () => {
-    searchBar.classList.toggle('open');
-    if (searchBar.classList.contains('open')) root.querySelector('#search-input').focus();
+  // Search
+  const searchBar = viewerRoot.querySelector('#viewer-search');
+  const searchInput = viewerRoot.querySelector('#search-input');
+
+  viewerRoot.querySelector('#tb-search').addEventListener('click', () => {
+    const isOpen = searchBar.classList.toggle('open');
+    if (isOpen) searchInput.focus();
+    else clearSearch(viewerRoot);
   });
-  root.querySelector('#search-close').addEventListener('click', () => searchBar.classList.remove('open'));
-  root.querySelector('#search-input').addEventListener('input', (e) => runSearch(root, e.target.value));
-  root.querySelector('#search-next').addEventListener('click', () => stepMatch(root, 1));
-  root.querySelector('#search-prev').addEventListener('click', () => stepMatch(root, -1));
+  viewerRoot.querySelector('#search-close').addEventListener('click', () => {
+    searchBar.classList.remove('open');
+    clearSearch(viewerRoot);
+  });
+  searchInput.addEventListener('input', (e) => runSearch(viewerRoot, e.target.value));
+  viewerRoot.querySelector('#search-next').addEventListener('click', () => stepMatch(viewerRoot, 1));
+  viewerRoot.querySelector('#search-prev').addEventListener('click', () => stepMatch(viewerRoot, -1));
 
-  root.querySelector('#viewer-thumbs').style.display = pdfState.pdf.numPages > 1 ? 'flex' : 'none';
+  // Keyboard shortcut — Ctrl/Cmd+F opens search
+  const kbHandler = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      searchBar.classList.add('open');
+      searchInput.focus();
+    }
+  };
+  document.addEventListener('keydown', kbHandler);
+  // Store for cleanup
+  const existingCleanup = _cleanup;
+  _cleanup = () => {
+    document.removeEventListener('keydown', kbHandler);
+    if (existingCleanup) existingCleanup();
+  };
 }
 
-async function rescale(root, newScale, zoomInBtn, zoomOutBtn) {
-  if (pdfState.rescaling) return;
-  pdfState.rescaling = true;
-  if (zoomInBtn) zoomInBtn.disabled = true;
-  if (zoomOutBtn) zoomOutBtn.disabled = true;
+async function rescale(viewerRoot, newScale) {
+  if (!pdfState || pdfState.rendering) return;
+  pdfState.rendering = true;
   pdfState.scale = newScale;
-  root.querySelector('#tb-zoomlevel').textContent = `${Math.round((newScale / 1.1) * 100)}%`;
-  await renderAllPages(root);
-  await loadAndRenderAnnotations(root, pdfState.doc);
-  observeCurrentPage(root);
-  pdfState.rescaling = false;
-  if (zoomInBtn) zoomInBtn.disabled = false;
-  if (zoomOutBtn) zoomOutBtn.disabled = false;
+
+  const zoomLabel = viewerRoot.querySelector('#tb-zoomlevel');
+  if (zoomLabel) zoomLabel.textContent = `${Math.round((newScale / 1.2) * 100)}%`;
+
+  // Disconnect old observer before re-rendering pages
+  if (pdfState.observer) {
+    pdfState.observer.disconnect();
+    pdfState.observer = null;
+  }
+
+  // Remember which page we were on so we can scroll back to it
+  const pageInput = viewerRoot.querySelector('#tb-pagenum');
+  const currentPage = parseInt(pageInput?.value, 10) || 1;
+
+  await renderAllPages(viewerRoot);
+  await loadAndRenderAnnotations(viewerRoot, pdfState.doc);
+  wirePageObserver(viewerRoot);
+
+  // Scroll back to where we were
+  jumpToPage(viewerRoot, currentPage);
+
+  pdfState.rendering = false;
 }
 
-function runSearch(root, query) {
-  const countEl = root.querySelector('#search-count');
-  if (!query.trim()) { pdfState.matches = []; countEl.textContent = '0/0'; return; }
+// ---- Page visibility observer ----
+
+function wirePageObserver(viewerRoot) {
+  if (!pdfState) return;
+
+  // Disconnect any previous observer
+  if (pdfState.observer) pdfState.observer.disconnect();
+
+  const scroll = viewerRoot.querySelector('#viewer-scroll');
+  const pageInput = viewerRoot.querySelector('#tb-pagenum');
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      // Pick the page with the highest intersection ratio that is actually visible
+      let best = null;
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          if (!best || entry.intersectionRatio > best.intersectionRatio) best = entry;
+        }
+      }
+      if (best) {
+        const n = Number(best.target.dataset.page);
+        if (pageInput) pageInput.value = n;
+        viewerRoot.querySelectorAll('.viewer-thumb').forEach((t) => {
+          t.classList.toggle('active', Number(t.dataset.page) === n);
+        });
+      }
+    },
+    { root: scroll, threshold: [0, 0.25, 0.5, 0.75, 1.0] },
+  );
+
+  viewerRoot.querySelectorAll('.viewer-page').forEach((p) => observer.observe(p));
+  pdfState.observer = observer;
+}
+
+// ---- Search ----
+
+function runSearch(viewerRoot, query) {
+  const countEl = viewerRoot.querySelector('#search-count');
+  if (!pdfState || !query.trim()) {
+    if (pdfState) pdfState.matches = [];
+    if (countEl) countEl.textContent = '0 / 0';
+    return;
+  }
   const q = query.toLowerCase();
   pdfState.matches = Object.entries(pdfState.textCache)
     .filter(([, text]) => text.toLowerCase().includes(q))
-    .map(([page]) => Number(page));
+    .map(([page]) => Number(page))
+    .sort((a, b) => a - b);
   pdfState.matchIndex = pdfState.matches.length ? 0 : -1;
-  countEl.textContent = `${pdfState.matches.length ? 1 : 0}/${pdfState.matches.length}`;
-  if (pdfState.matches.length) jumpToPage(root, pdfState.matches[0]);
+  if (countEl) countEl.textContent = `${pdfState.matches.length ? 1 : 0} / ${pdfState.matches.length}`;
+  if (pdfState.matches.length) jumpToPage(viewerRoot, pdfState.matches[0]);
 }
 
-function stepMatch(root, dir) {
-  if (!pdfState.matches.length) return;
+function stepMatch(viewerRoot, dir) {
+  if (!pdfState || !pdfState.matches.length) return;
   pdfState.matchIndex = (pdfState.matchIndex + dir + pdfState.matches.length) % pdfState.matches.length;
-  root.querySelector('#search-count').textContent = `${pdfState.matchIndex + 1}/${pdfState.matches.length}`;
-  jumpToPage(root, pdfState.matches[pdfState.matchIndex]);
+  const countEl = viewerRoot.querySelector('#search-count');
+  if (countEl) countEl.textContent = `${pdfState.matchIndex + 1} / ${pdfState.matches.length}`;
+  jumpToPage(viewerRoot, pdfState.matches[pdfState.matchIndex]);
 }
 
-function observeCurrentPage(root) {
-  const scroll = root.querySelector('#viewer-scroll');
-  const pageInput = root.querySelector('#tb-pagenum');
-  const observer = new IntersectionObserver((entries) => {
-    const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (visible) {
-      const n = Number(visible.target.dataset.page);
-      pageInput.value = n;
-      root.querySelectorAll('.viewer-thumb').forEach((t) => t.classList.toggle('active', Number(t.dataset.page) === n));
-    }
-  }, { root: scroll, threshold: [0.5] });
-  root.querySelectorAll('.viewer-page').forEach((p) => observer.observe(p));
+function clearSearch(viewerRoot) {
+  if (pdfState) { pdfState.matches = []; pdfState.matchIndex = -1; }
+  const countEl = viewerRoot.querySelector('#search-count');
+  if (countEl) countEl.textContent = '0 / 0';
+  const input = viewerRoot.querySelector('#search-input');
+  if (input) input.value = '';
 }
 
-// ---------------- Annotations ----------------
+// ---- Annotations ----
+
 const COLORS = ['yellow', 'green', 'blue', 'pink'];
 
-async function loadAndRenderAnnotations(root, doc) {
-  const annots = await Annotations.list(doc.id, doc.current_version);
-  annots.forEach((a) => renderAnnotation(root, a));
+async function loadAndRenderAnnotations(viewerRoot, doc) {
+  try {
+    const annots = await Annotations.list(doc.id, doc.current_version);
+    annots.forEach((a) => renderAnnotation(viewerRoot, a));
+  } catch (e) {
+    console.warn('Annotation load failed:', e);
+  }
 }
 
-function renderAnnotation(root, a) {
-  const pageEl = root.querySelector(`.viewer-page[data-page="${a.page_number}"]`);
+function renderAnnotation(viewerRoot, a) {
+  const pageEl = viewerRoot.querySelector(`.viewer-page[data-page="${a.page_number}"]`);
   if (!pageEl) return;
   const layer = pageEl.querySelector('.annot-layer');
-  const rect = pageEl.getBoundingClientRect();
+  if (!layer) return;
+
   if (a.annotation_type === 'sticky_note') {
     const pin = document.createElement('div');
     pin.className = 'annot-note-pin';
-    pin.style.cssText = `left:${a.x_coord * 100}%; top:${a.y_coord * 100}%; pointer-events:auto;`;
+    pin.style.cssText = `left:${a.x_coord * 100}%; top:${a.y_coord * 100}%; pointer-events:auto; position:absolute;`;
     pin.innerHTML = Icon.stickyNote;
-    pin.title = a.content;
-    pin.addEventListener('click', (e) => showAnnotPopoverInfo(e, a));
+    pin.title = a.content || '';
+    pin.addEventListener('click', (e) => showAnnotInfo(e, a, viewerRoot));
+    layer.style.pointerEvents = 'none';
     layer.appendChild(pin);
   } else {
     const hl = document.createElement('div');
-    hl.className = `annot-highlight color-${a.color}`;
-    hl.style.cssText = `left:${a.x_coord * 100}%; top:${a.y_coord * 100}%; width:${a.width * 100}%; height:${a.height * 100}%; pointer-events:auto;`;
-    hl.addEventListener('click', (e) => showAnnotPopoverInfo(e, a));
+    hl.className = `annot-highlight color-${a.color || 'yellow'}`;
+    hl.style.cssText = `
+      position:absolute;
+      left:${a.x_coord * 100}%;
+      top:${a.y_coord * 100}%;
+      width:${a.width * 100}%;
+      height:${a.height * 100}%;
+      pointer-events:auto;
+    `;
+    hl.addEventListener('click', (e) => showAnnotInfo(e, a, viewerRoot));
     layer.appendChild(hl);
   }
 }
 
-function showAnnotPopoverInfo(e, a) {
+function showAnnotInfo(e, a, viewerRoot) {
   e.stopPropagation();
   document.querySelectorAll('.annot-popover').forEach((p) => p.remove());
+
   const pop = document.createElement('div');
   pop.className = 'annot-popover';
-  pop.style.cssText = `left:${e.clientX}px; top:${e.clientY + 8}px; flex-direction:column; align-items:flex-start; max-width:220px;`;
+
+  // Clamp to viewport
+  const x = Math.min(e.clientX, window.innerWidth - 240);
+  const y = Math.min(e.clientY + 8, window.innerHeight - 120);
+  pop.style.cssText = `left:${x}px; top:${y}px; flex-direction:column; align-items:flex-start; max-width:220px;`;
+
   pop.innerHTML = `
-    ${a.content ? `<div style="padding:4px 6px; font-size:12px; max-width:200px;">${escapeHtml(a.content)}</div>` : ''}
-    <button style="width:auto; padding:4px 8px; gap:6px; display:flex; align-items:center;" data-del>${Icon.trash}<span style="font-size:11px;">Remove</span></button>
+    ${a.content ? `<div style="padding:6px 8px; font-size:12px; line-height:1.5; max-width:200px; border-bottom:1px solid rgba(255,255,255,0.1);">${escapeHtml(a.content)}</div>` : ''}
+    <button style="width:auto; padding:6px 10px; gap:6px; display:flex; align-items:center;" data-del>
+      ${Icon.trash}<span style="font-size:11px;">Remove</span>
+    </button>
   `;
   document.body.appendChild(pop);
+
   pop.querySelector('[data-del]').addEventListener('click', async () => {
     await Annotations.remove(a.id);
     pop.remove();
-    if (state.selectedDocument) openDocument(state.selectedDocument.id);
+    if (state.selectedDocument) {
+      await loadAndRenderAnnotations(viewerRoot, state.selectedDocument);
+    }
   });
-  setTimeout(() => document.addEventListener('mousedown', function dismiss(ev) { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); } }), 0);
+
+  setTimeout(() => {
+    document.addEventListener('mousedown', function dismiss(ev) {
+      if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); }
+    });
+  }, 0);
 }
 
-function handleTextSelection(pageEl, pageNumber) {
+function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !sel.toString().trim()) return;
+
   const range = sel.getRangeAt(0);
-  const rawRects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+  const rawRects = Array.from(range.getClientRects()).filter((r) => r.width > 2 && r.height > 2);
   if (!rawRects.length) return;
+
   const pageRect = pageEl.getBoundingClientRect();
   const selectedText = sel.toString();
 
-  // one rect per visual line the selection actually covers — NOT one bounding
-  // box for the whole selection, which is what made highlights look like they
-  // covered a full row even for a short selection within it.
+  // One rect per visual line the selection covers
   const lineRects = rawRects.map((r) => ({
     relX: (r.left - pageRect.left) / pageRect.width,
     relY: (r.top - pageRect.top) / pageRect.height,
     relW: r.width / pageRect.width,
     relH: r.height / pageRect.height,
   }));
+
   const anchorRect = rawRects[0];
 
   document.querySelectorAll('.annot-popover').forEach((p) => p.remove());
+
   const pop = document.createElement('div');
   pop.className = 'annot-popover';
-  pop.style.cssText = `left:${anchorRect.left + anchorRect.width / 2 - 90}px; top:${anchorRect.top - 46}px;`;
+
+  // Clamp popover to viewport
+  const popLeft = Math.max(8, Math.min(anchorRect.left + anchorRect.width / 2 - 90, window.innerWidth - 196));
+  const popTop = Math.max(8, anchorRect.top - 50);
+  pop.style.cssText = `left:${popLeft}px; top:${popTop}px;`;
+
   pop.innerHTML = `
-    ${COLORS.map((c) => `<button data-color="${c}"><span class="annot-color-dot ${c}"></span></button>`).join('')}
+    ${COLORS.map((c) => `<button data-color="${c}" title="Highlight ${c}"><span class="annot-color-dot ${c}"></span></button>`).join('')}
     <button data-note title="Sticky note">${Icon.stickyNote}</button>
     <button data-explain title="Explain with AI">${Icon.sparkles}</button>
   `;
   document.body.appendChild(pop);
 
+  // Highlight buttons
   pop.querySelectorAll('[data-color]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const layer = document.querySelector('#pdf-viewer-root') || document.body;
+      pop.remove();
       for (const lr of lineRects) {
         const a = await Annotations.create({
-          document_id: state.selectedDocument.id, version_number: state.selectedDocument.current_version,
-          annotation_type: 'highlight', page_number: pageNumber, x_coord: lr.relX, y_coord: lr.relY, width: lr.relW, height: lr.relH,
-          color: btn.dataset.color, content: null,
+          document_id: state.selectedDocument.id,
+          version_number: state.selectedDocument.current_version,
+          annotation_type: 'highlight',
+          page_number: pageNumber,
+          x_coord: lr.relX,
+          y_coord: lr.relY,
+          width: lr.relW,
+          height: lr.relH,
+          color: btn.dataset.color,
+          content: null,
         });
-        renderAnnotation(layer, a);
+        renderAnnotation(viewerRoot, a);
       }
-      pop.remove();
       sel.removeAllRanges();
     });
   });
 
+  // Sticky note button
   pop.querySelector('[data-note]').addEventListener('click', () => {
     pop.remove();
     const { close } = openModal({
@@ -542,21 +804,34 @@ function handleTextSelection(pageEl, pageNumber) {
       if (!content) return;
       const first = lineRects[0];
       const a = await Annotations.create({
-        document_id: state.selectedDocument.id, version_number: state.selectedDocument.current_version,
-        annotation_type: 'sticky_note', page_number: pageNumber, x_coord: first.relX, y_coord: first.relY, width: first.relW, height: first.relH,
-        color: 'yellow', content,
+        document_id: state.selectedDocument.id,
+        version_number: state.selectedDocument.current_version,
+        annotation_type: 'sticky_note',
+        page_number: pageNumber,
+        x_coord: first.relX,
+        y_coord: first.relY,
+        width: first.relW,
+        height: first.relH,
+        color: 'yellow',
+        content,
       });
-      renderAnnotation(document.querySelector('#pdf-viewer-root'), a);
+      renderAnnotation(viewerRoot, a);
       close();
       sel.removeAllRanges();
     });
   });
 
-  pop.querySelector('[data-explain]').addEventListener('click', async () => {
+  // Explain with AI
+  pop.querySelector('[data-explain]').addEventListener('click', () => {
     pop.remove();
     sel.removeAllRanges();
     openAiPanel(state.selectedDocument.id, { explainText: selectedText });
   });
 
-  setTimeout(() => document.addEventListener('mousedown', function dismiss(ev) { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); } }), 0);
+  // Dismiss on outside click
+  setTimeout(() => {
+    document.addEventListener('mousedown', function dismiss(ev) {
+      if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); }
+    });
+  }, 0);
 }

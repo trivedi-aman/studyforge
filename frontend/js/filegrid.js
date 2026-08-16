@@ -45,7 +45,7 @@ async function refresh(searchQuery = null) {
   const crumbs = root.querySelector('#breadcrumbs');
 
   if (searchQuery) {
-    crumbs.innerHTML = `<span class="topbar__crumb current">Search results for "${escapeHtml(searchQuery)}"</span>`;
+    crumbs.innerHTML = `<span class="topbar__crumb current">Search: "${escapeHtml(searchQuery)}"</span>`;
     const results = await Documents.search(searchQuery);
     renderCanvas(body, { title: `"${searchQuery}"`, meta: `${results.length} result${results.length === 1 ? '' : 's'}`, folders: [], documents: results, isSearch: true });
     return;
@@ -60,9 +60,14 @@ async function refresh(searchQuery = null) {
 
   // Files nav
   const chain = getBreadcrumbChain();
-  crumbs.innerHTML = [`<span class="topbar__crumb ${!chain.length ? 'current' : ''}" data-crumb="root">All Files</span>`]
-    .concat(chain.map((f, i) => `<span class="topbar__sep">${Icon.chevRight}</span><span class="topbar__crumb ${i === chain.length - 1 ? 'current' : ''}" data-crumb="${f.id}">${escapeHtml(f.name)}</span>`))
-    .join('');
+  const crumbItems = [
+    `<span class="topbar__crumb ${!chain.length ? 'current' : ''}" data-crumb="root" style="cursor:pointer;">All Files</span>`,
+    ...chain.map((f, i) =>
+      `<span class="topbar__sep">${Icon.chevRight}</span>
+       <span class="topbar__crumb ${i === chain.length - 1 ? 'current' : ''}" data-crumb="${f.id}" style="cursor:pointer;">${escapeHtml(f.name)}</span>`
+    ),
+  ];
+  crumbs.innerHTML = crumbItems.join('');
   crumbs.querySelectorAll('[data-crumb]').forEach((el) => {
     el.addEventListener('click', () => selectFolder(el.dataset.crumb === 'root' ? null : el.dataset.crumb));
   });
@@ -70,7 +75,12 @@ async function refresh(searchQuery = null) {
   const subfolders = state.folders.filter((f) => f.parent_folder_id === state.currentFolderId);
   const documents = await Documents.listByFolder(state.currentFolderId);
   const title = chain.length ? chain[chain.length - 1].name : 'All Files';
-  renderCanvas(body, { title, meta: `${subfolders.length + documents.length} item${subfolders.length + documents.length === 1 ? '' : 's'}`, folders: subfolders, documents });
+  renderCanvas(body, {
+    title,
+    meta: `${subfolders.length + documents.length} item${subfolders.length + documents.length === 1 ? '' : 's'}`,
+    folders: subfolders,
+    documents,
+  });
 }
 
 function renderTopbarActions() {
@@ -95,7 +105,7 @@ function renderTopbarActions() {
 }
 
 function renderCanvas(body, { title, meta, folders, documents, isSearch }) {
-  const items = documents.length + folders.length;
+  const total = documents.length + folders.length;
   body.innerHTML = `
     <div class="canvas-toolbar">
       <div>
@@ -114,7 +124,7 @@ function renderCanvas(body, { title, meta, folders, documents, isSearch }) {
   });
 
   const host = body.querySelector('#grid-host');
-  if (items === 0) {
+  if (total === 0) {
     host.innerHTML = `
       <div class="empty-state">
         <div class="empty-state__icon">${isSearch ? Icon.search : Icon.folder}</div>
@@ -124,28 +134,33 @@ function renderCanvas(body, { title, meta, folders, documents, isSearch }) {
     return;
   }
 
-  if (state.gridMode === 'grid') host.innerHTML = `<div class="file-grid">${folders.map(folderCardHTML).join('') + documents.map(docCardHTML).join('')}</div>`;
-  else host.innerHTML = renderListView(folders, documents);
+  if (state.gridMode === 'grid') {
+    host.innerHTML = `<div class="file-grid">${folders.map(folderCardHTML).join('') + documents.map(docCardHTML).join('')}</div>`;
+  } else {
+    host.innerHTML = renderListView(folders, documents);
+  }
 
   wireItemInteractions(host, folders, documents);
 }
 
 function folderCardHTML(f) {
-  const count = state.folders.filter((x) => x.parent_folder_id === f.id).length + 0;
   return `
-    <div class="file-card" data-folder="${f.id}">
+    <div class="file-card" data-folder="${f.id}" style="cursor:pointer;">
       <div class="file-card__thumb folder">${Icon.folder}</div>
       <div class="file-card__name">${escapeHtml(f.name)}</div>
       <div class="file-card__meta">Folder</div>
     </div>`;
 }
 
-const TYPE_ICON = { pdf: Icon.filePdf, pptx: Icon.fileSlides, docx: Icon.file, xlsx: Icon.file, image: Icon.fileImage, txt: Icon.file, md: Icon.notes };
+const TYPE_ICON = {
+  pdf: Icon.filePdf, pptx: Icon.fileSlides, docx: Icon.file,
+  xlsx: Icon.file, image: Icon.fileImage, txt: Icon.file, md: Icon.notes,
+};
 
 function docCardHTML(d) {
   const thumbClass = d.file_type === 'md' ? 'notes' : '';
   return `
-    <div class="file-card" data-doc="${d.id}" draggable="true">
+    <div class="file-card" data-doc="${d.id}" draggable="true" style="cursor:pointer;">
       <div class="file-card__thumb ${thumbClass}">
         ${TYPE_ICON[d.file_type] || Icon.file}
         ${d.is_ai_generated ? `<div class="file-card__ai-badge">${Icon.sparkles}</div>` : ''}
@@ -159,7 +174,7 @@ function docCardHTML(d) {
 function renderListView(folders, documents) {
   const rows = [
     ...folders.map((f) => `
-      <div class="file-list__row" data-folder="${f.id}">
+      <div class="file-list__row" data-folder="${f.id}" style="cursor:pointer;">
         <div class="file-list__name">${Icon.folder}<span>${escapeHtml(f.name)}</span></div>
         <div class="file-list__cell">Folder</div>
         <div class="file-list__cell">—</div>
@@ -167,36 +182,40 @@ function renderListView(folders, documents) {
         <div></div>
       </div>`),
     ...documents.map((d) => `
-      <div class="file-list__row" data-doc="${d.id}" draggable="true">
+      <div class="file-list__row" data-doc="${d.id}" draggable="true" style="cursor:pointer;">
         <div class="file-list__name">${TYPE_ICON[d.file_type] || Icon.file}<span>${escapeHtml(d.filename)}</span></div>
         <div class="file-list__cell">${d.file_type.toUpperCase()}</div>
         <div class="file-list__cell">${formatBytes(d.file_size_bytes)}</div>
         <div class="file-list__cell">${timeAgo(d.updated_at)}</div>
-        <button class="icon-btn" data-fav="${d.id}" style="${d.favorite ? `color:var(--warning)` : ''}">${Icon.star}</button>
+        <button class="icon-btn" data-fav="${d.id}" style="${d.favorite ? 'color:var(--warning)' : ''}">${Icon.star}</button>
       </div>`),
   ].join('');
   return `
     <div class="file-list__head"><div>Name</div><div>Type</div><div>Size</div><div>Modified</div><div></div></div>
-    ${rows}`;
+    <div class="file-list">${rows}</div>`;
 }
 
 function wireItemInteractions(host, folders, documents) {
+  // Folders
   host.querySelectorAll('[data-folder]').forEach((el) => {
-    el.addEventListener('click', () => selectFolder(el.dataset.folder));
+    const folder = folders.find((f) => f.id === el.dataset.folder);
+    if (!folder) return;
+    el.addEventListener('click', () => selectFolder(folder.id));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const folder = folders.find((f) => f.id === el.dataset.folder);
       openContextMenu(e.clientX, e.clientY, [
-        { label: 'Open', icon: Icon.folder, onClick: () => selectFolder(folder.id) },
-        { label: 'Rename', icon: Icon.edit, onClick: () => promptRenameFolderInline(folder) },
+        { label: 'Open', icon: Icon.folder, action: 'open', onClick: () => selectFolder(folder.id) },
+        { label: 'Rename', icon: Icon.edit, action: 'rename', onClick: () => promptRenameFolderInline(folder) },
         { type: 'sep' },
-        { label: 'Delete', icon: Icon.trash, danger: true, onClick: () => confirmDeleteFolderInline(folder) },
+        { label: 'Delete', icon: Icon.trash, action: 'delete', danger: true, onClick: () => confirmDeleteFolderInline(folder) },
       ]);
     });
   });
 
+  // Documents
   host.querySelectorAll('[data-doc]').forEach((el) => {
     const doc = documents.find((d) => d.id === el.dataset.doc);
+    if (!doc) return;
     el.addEventListener('click', (e) => {
       if (e.target.closest('[data-fav]')) return;
       openDocument(doc.id);
@@ -208,6 +227,7 @@ function wireItemInteractions(host, folders, documents) {
     });
   });
 
+  // Favorite buttons
   host.querySelectorAll('[data-fav]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -219,15 +239,15 @@ function wireItemInteractions(host, folders, documents) {
 
 function openDocContextMenu(x, y, doc) {
   openContextMenu(x, y, [
-    { label: 'Open', icon: Icon.file, onClick: () => openDocument(doc.id) },
-    { label: doc.favorite ? 'Remove from favorites' : 'Add to favorites', icon: Icon.star, onClick: async () => { await Documents.toggleFavorite(doc.id); refresh(); } },
-    { label: 'Rename', icon: Icon.edit, onClick: () => promptRenameDoc(doc) },
-    { label: 'Move to…', icon: Icon.move, onClick: () => promptMoveDoc(doc) },
-    { label: 'Manage tags', icon: Icon.tag, onClick: () => promptManageTags(doc) },
+    { label: 'Open', icon: Icon.file, action: 'open', onClick: () => openDocument(doc.id) },
+    { label: doc.favorite ? 'Remove from favorites' : 'Add to favorites', icon: Icon.star, action: 'fav', onClick: async () => { await Documents.toggleFavorite(doc.id); refresh(); } },
+    { label: 'Rename', icon: Icon.edit, action: 'rename', onClick: () => promptRenameDoc(doc) },
+    { label: 'Move to…', icon: Icon.move, action: 'move', onClick: () => promptMoveDoc(doc) },
+    { label: 'Manage tags', icon: Icon.tag, action: 'tags', onClick: () => promptManageTags(doc) },
     { type: 'sep' },
-    { label: 'Download', icon: Icon.download, onClick: () => toast(`Downloading ${doc.filename}…`, 'info') },
+    { label: 'Download', icon: Icon.download, action: 'download', onClick: () => toast(`Downloading ${doc.filename}…`, 'info') },
     { type: 'sep' },
-    { label: 'Delete', icon: Icon.trash, danger: true, onClick: () => confirmDeleteDoc(doc) },
+    { label: 'Delete', icon: Icon.trash, action: 'delete', danger: true, onClick: () => confirmDeleteDoc(doc) },
   ]);
 }
 
@@ -243,12 +263,19 @@ async function handleUpload(fileList) {
 }
 
 function promptNewFolder() {
-  const options = state.folders.map((f) => `<option value="${f.id}" ${f.id === state.currentFolderId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  const options = state.folders
+    .map((f) => `<option value="${f.id}" ${f.id === state.currentFolderId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`)
+    .join('');
+
   const { el, close } = openModal({
     title: 'New folder',
     bodyHTML: `
-      <div class="field"><label class="field__label">Folder name</label><input class="input" id="pnf-name" autofocus /></div>
-      <div class="field"><label class="field__label">Parent folder</label>
+      <div class="field">
+        <label class="field__label">Folder name</label>
+        <input class="input" id="pnf-name" autofocus placeholder="e.g. Machine Learning" />
+      </div>
+      <div class="field">
+        <label class="field__label">Parent folder</label>
         <select class="select" id="pnf-parent">
           <option value="" ${!state.currentFolderId ? 'selected' : ''}>Root (All Files)</option>
           ${options}
@@ -257,27 +284,36 @@ function promptNewFolder() {
     `,
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn btn--primary" id="pnf-confirm">Create folder</button>`,
   });
+
+  setTimeout(() => el.querySelector('#pnf-name')?.focus(), 60);
+
   el.querySelector('#pnf-confirm').addEventListener('click', async () => {
     const name = el.querySelector('#pnf-name').value.trim();
     if (!name) return;
     const targetParent = el.querySelector('#pnf-parent').value || null;
     const f = await Folders.create(name, targetParent);
-    state.folders.push(f);
+
+    // Update state properly
+    set({ folders: [...state.folders, f] });
+    if (targetParent) state.expandedFolders.add(targetParent);
+
     toast(`Created "${name}"`, 'success');
     close();
-    busEmit('sf:nav-changed', {});
+
+    // Navigate into the new folder immediately
+    selectFolder(f.id);
   });
-  setTimeout(() => el.querySelector('#pnf-name')?.focus(), 60);
 }
 
 function promptRenameFolderInline(folder) {
-  const { close } = openModal({
+  const { el, close } = openModal({
     title: 'Rename folder',
-    bodyHTML: `<div class="field"><input class="input" id="rf-name" value="${escapeHtml(folder.name)}" /></div>`,
+    bodyHTML: `<div class="field"><label class="field__label">Name</label><input class="input" id="rf-name" value="${escapeHtml(folder.name)}" /></div>`,
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn btn--primary" id="rf-confirm">Save</button>`,
   });
-  document.getElementById('rf-confirm').addEventListener('click', async () => {
-    const name = document.getElementById('rf-name').value.trim();
+  setTimeout(() => el.querySelector('#rf-name')?.focus(), 60);
+  el.querySelector('#rf-confirm').addEventListener('click', async () => {
+    const name = el.querySelector('#rf-name').value.trim();
     if (!name) return;
     await Folders.rename(folder.id, name);
     folder.name = name;
@@ -287,15 +323,16 @@ function promptRenameFolderInline(folder) {
 }
 
 function confirmDeleteFolderInline(folder) {
-  const { close } = openModal({
+  const { el, close } = openModal({
     title: `Delete "${folder.name}"?`,
-    subtitle: 'This deletes everything inside it too. This can\'t be undone.',
+    subtitle: "This deletes everything inside it too. This can't be undone.",
     bodyHTML: '',
-    footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn" id="df-confirm" style="background:var(--danger); color:#fff;">Delete</button>`,
+    footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn" id="df-confirm" style="background:var(--danger);color:#fff;">Delete</button>`,
   });
-  document.getElementById('df-confirm').addEventListener('click', async () => {
+  el.querySelector('#df-confirm').addEventListener('click', async () => {
     await Folders.remove(folder.id);
-    state.folders = await Folders.list();
+    const folders = await Folders.list();
+    set({ folders });
     close();
     toast('Folder deleted', 'success');
     busEmit('sf:nav-changed', {});
@@ -303,13 +340,14 @@ function confirmDeleteFolderInline(folder) {
 }
 
 function promptRenameDoc(doc) {
-  const { close } = openModal({
+  const { el, close } = openModal({
     title: 'Rename file',
-    bodyHTML: `<div class="field"><input class="input" id="rd-name" value="${escapeHtml(doc.filename)}" /></div>`,
+    bodyHTML: `<div class="field"><label class="field__label">Filename</label><input class="input" id="rd-name" value="${escapeHtml(doc.filename)}" /></div>`,
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn btn--primary" id="rd-confirm">Save</button>`,
   });
-  document.getElementById('rd-confirm').addEventListener('click', async () => {
-    const name = document.getElementById('rd-name').value.trim();
+  setTimeout(() => el.querySelector('#rd-name')?.focus(), 60);
+  el.querySelector('#rd-confirm').addEventListener('click', async () => {
+    const name = el.querySelector('#rd-name').value.trim();
     if (!name) return;
     await Documents.rename(doc.id, name);
     close();
@@ -320,13 +358,13 @@ function promptRenameDoc(doc) {
 
 function promptMoveDoc(doc) {
   const options = state.folders.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
-  const { close } = openModal({
+  const { el, close } = openModal({
     title: `Move "${doc.filename}"`,
     bodyHTML: `<div class="field"><label class="field__label">Destination folder</label><select class="select" id="md-target"><option value="">Root (All Files)</option>${options}</select></div>`,
     footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn btn--primary" id="md-confirm">Move</button>`,
   });
-  document.getElementById('md-confirm').addEventListener('click', async () => {
-    const target = document.getElementById('md-target').value || null;
+  el.querySelector('#md-confirm').addEventListener('click', async () => {
+    const target = el.querySelector('#md-target').value || null;
     await Documents.move(doc.id, target);
     close();
     toast('Moved', 'success');
@@ -339,19 +377,30 @@ async function promptManageTags(doc) {
   const render = () => allTags.map((t) => `
     <button class="select-pill ${doc.tags.includes(t.id) ? 'selected' : ''}" data-tag="${t.id}">${escapeHtml(t.name)}</button>
   `).join('');
-  const { el, close } = openModal({
+  const { el } = openModal({
     title: 'Manage tags',
     subtitle: doc.filename,
-    bodyHTML: `<div class="select-pill-group" id="tag-pills">${render()}</div>
-      <div class="field" style="margin-top:12px;"><input class="input" id="new-tag-input" placeholder="Create new tag…" /></div>`,
+    bodyHTML: `
+      <div class="select-pill-group" id="tag-pills">${render()}</div>
+      <div class="field" style="margin-top:12px;">
+        <input class="input" id="new-tag-input" placeholder="Create new tag and press Enter…" />
+      </div>
+    `,
     footerHTML: `<button class="btn btn--primary" data-close-modal>Done</button>`,
   });
   el.querySelector('#tag-pills').addEventListener('click', async (e) => {
     const pill = e.target.closest('[data-tag]');
     if (!pill) return;
     const tagId = pill.dataset.tag;
-    if (doc.tags.includes(tagId)) { await Tags.detach(doc.id, tagId); doc.tags = doc.tags.filter((t) => t !== tagId); pill.classList.remove('selected'); }
-    else { await Tags.attach(doc.id, tagId); doc.tags.push(tagId); pill.classList.add('selected'); }
+    if (doc.tags.includes(tagId)) {
+      await Tags.detach(doc.id, tagId);
+      doc.tags = doc.tags.filter((t) => t !== tagId);
+      pill.classList.remove('selected');
+    } else {
+      await Tags.attach(doc.id, tagId);
+      doc.tags.push(tagId);
+      pill.classList.add('selected');
+    }
   });
   el.querySelector('#new-tag-input').addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && e.target.value.trim()) {
@@ -364,13 +413,13 @@ async function promptManageTags(doc) {
 }
 
 function confirmDeleteDoc(doc) {
-  const { close } = openModal({
+  const { el, close } = openModal({
     title: `Delete "${doc.filename}"?`,
-    subtitle: 'This can\'t be undone.',
+    subtitle: "This can't be undone.",
     bodyHTML: '',
-    footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn" id="dd-confirm" style="background:var(--danger); color:#fff;">Delete</button>`,
+    footerHTML: `<button class="btn btn--ghost" data-close-modal>Cancel</button><button class="btn" id="dd-confirm" style="background:var(--danger);color:#fff;">Delete</button>`,
   });
-  document.getElementById('dd-confirm').addEventListener('click', async () => {
+  el.querySelector('#dd-confirm').addEventListener('click', async () => {
     await Documents.remove(doc.id);
     close();
     toast('Deleted', 'success');

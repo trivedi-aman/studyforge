@@ -3,8 +3,7 @@
 // ============================================================
 
 export function openModal({ title, subtitle = '', bodyHTML, footerHTML, width = '' }) {
-  // Only one modal at a time — prevents duplicate-submission bugs if a click
-  // is fired twice (e.g. while the UI feels slow) before the first modal closes.
+  // Only one modal at a time
   document.querySelectorAll('.modal-scrim').forEach((m) => m.remove());
 
   const scrim = document.createElement('div');
@@ -35,33 +34,44 @@ export function openModal({ title, subtitle = '', bodyHTML, footerHTML, width = 
   scrim.addEventListener('click', (e) => {
     if (e.target === scrim || e.target.closest('[data-close-modal]')) close();
   });
-  document.addEventListener('keydown', function escHandler(e) {
+
+  const escHandler = (e) => {
     if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
-  });
+  };
+  document.addEventListener('keydown', escHandler);
 
   return { el: scrim, close };
 }
 
 export function openContextMenu(x, y, items) {
   document.querySelectorAll('.context-menu').forEach((m) => m.remove());
+
   const menu = document.createElement('div');
   menu.className = 'context-menu';
-  menu.innerHTML = items.map((item) => {
+
+  // Use array index as the key — avoids the bug where missing `action`
+  // strings caused items.find() to return undefined and onClick to never fire.
+  menu.innerHTML = items.map((item, idx) => {
     if (item.type === 'sep') return '<div class="context-menu__sep"></div>';
-    return `<div class="context-menu__item ${item.danger ? 'danger' : ''}" data-action="${item.action}">${item.icon || ''}<span>${item.label}</span></div>`;
+    return `
+      <div class="context-menu__item ${item.danger ? 'danger' : ''}" data-idx="${idx}">
+        ${item.icon || ''}<span>${item.label}</span>
+      </div>`;
   }).join('');
+
   document.body.appendChild(menu);
 
-  const rect = menu.getBoundingClientRect();
-  const left = Math.min(x, window.innerWidth - rect.width - 12);
-  const top = Math.min(y, window.innerHeight - rect.height - 12);
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
+  // Position — clamp to viewport so the menu never clips off-screen
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.min(x, window.innerWidth - menuRect.width - 12);
+  const top = Math.min(y, window.innerHeight - menuRect.height - 12);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
 
   menu.addEventListener('click', (e) => {
-    const row = e.target.closest('[data-action]');
+    const row = e.target.closest('[data-idx]');
     if (row) {
-      const item = items.find((i) => i.action === row.dataset.action);
+      const item = items[Number(row.dataset.idx)];
       item?.onClick?.();
     }
     menu.remove();
@@ -79,22 +89,28 @@ export function openContextMenu(x, y, items) {
 }
 
 export function escapeHtml(str = '') {
-  return str.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 export function formatBytes(bytes) {
-  if (bytes === 0 || bytes == null) return '—';
+  if (!bytes || bytes === 0) return '—';
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 export function formatDate(iso) {
+  if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+  });
 }
 
 export function timeAgo(iso) {
+  if (!iso) return '—';
   const s = Math.floor((Date.now() - new Date(iso)) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;

@@ -202,3 +202,23 @@
   .sidebar-toggle { display: none; }
   .ai-panel { width: 100vw; max-width: 100vw; }
 }
+
+
+
+
+/* Fix scroll containers throughout the viewer and notebook */
+.main__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#main-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
