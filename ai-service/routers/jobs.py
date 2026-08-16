@@ -399,10 +399,20 @@ def _process_youtube_to_notes(job_id: str, body: YoutubeToNotesRequest):
             return
 
         # 2. Fetch transcript — handle both old and new youtube-transcript-api APIs
-        full_transcript = _fetch_transcript(video_id)
+        # 2. Fetch transcript — handle both old and new youtube-transcript-api APIs
+            # 2. Fetch transcript
+        try:
+            full_transcript = _fetch_transcript(video_id)
+        except RuntimeError as e:
+            # IP block — surface the real reason
+            _fail_job(job_id, str(e))
+            return
         if full_transcript is None:
-            # _fail_job already called inside _fetch_transcript
-            _fail_job(job_id, "Could not retrieve transcript for this video.")
+            _fail_job(
+                job_id,
+                "Could not retrieve transcript for this video. It may have transcripts disabled, "
+                "be private/unavailable, or have no English or translatable track."
+            )
             return
 
         if len(full_transcript.strip()) < 100:
@@ -489,55 +499,84 @@ that captures the video's topic."""
         logger.exception(f"YouTube-to-Notes job {job_id} crashed")
         _fail_job(job_id, f"Unexpected error: {e}")
 
-
 def _fetch_transcript(video_id: str) -> Optional[str]:
     """
-    Fetch transcript text for a YouTube video.
-    Handles both youtube-transcript-api 0.6.x (legacy class-method API)
-    and the newer instance-based API introduced in 0.7+.
-    Returns concatenated transcript text, or None on failure.
+    Fetch transcript text for a YouTube video using youtube-transcript-api 0.7+.
+    Handles common failure modes: disabled transcripts, IP blocks, no English track.
+    Returns concatenated transcript text, or None on unrecoverable failure.
     """
-    # --- Strategy 1: new API (0.7+) ---
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import (
+        TranscriptsDisabled,
+        NoTranscriptFound,
+        VideoUnavailable,
+    )
+
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi
         ytt = YouTubeTranscriptApi()
-        fetched = ytt.fetch(video_id, languages=["en", "en-US"])
-        # FetchedTranscript is iterable of snippet objects with .text
-        segments = list(fetched)
-        text = " ".join(
-            seg.text if hasattr(seg, "text") else seg["text"]
-            for seg in segments
-        )
-        if len(text) > 30000:
-            text = text[:30000] + "\n\n[transcript truncated]"
-        logger.info(f"Fetched transcript for {video_id} via new API ({len(text)} chars)")
-        return text
-    except TypeError:
-        # YouTubeTranscriptApi() can't be instantiated — old API, fall through
-        pass
-    except Exception as e:
-        err = str(e).lower()
-        if any(kw in err for kw in ("disabled", "unavailable", "no transcript", "private")):
-            logger.warning(f"Transcript unavailable for {video_id}: {e}")
-            return None
-        logger.warning(f"New API fetch failed for {video_id}, trying legacy: {e}")
 
-    # --- Strategy 2: legacy class-method API (0.6.x) ---
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        transcript_list = YouTubeTranscriptApi.get_transcript(
-            video_id, languages=["en", "en-US"]
-        )
-        text = " ".join(seg["text"] for seg in transcript_list)
+        # First try: fetch English directly
+        try:
+            fetched = ytt.fetch(video_id, languages=["en", "en-US", "en-GB"])
+            segments = list(fetched)
+        except NoTranscriptFound:
+            # No English track — try to list all and grab any available,
+            # then use the translate() feature to get English
+            transcript_list = ytt.list(video_id)
+            # Try to find any transcript we can translate to English
+            for transcript in transcript_list:
+                try:
+                    if transcript.is_translatable:
+                        translated = transcript.translate("en").fetch()
+                        segments = list(translated)
+                        break
+                    else:
+                        # Non-translatable — just use whatever it is
+                        segments = list(transcript.fetch())
+                        break
+                except Exception:
+                    continue
+            else:
+                logger.warning(f"No usable transcript for {video_id}")
+                return None
+
+        # Extract text from segments (new API uses objects with .text attribute)
+        text_parts = []
+        for seg in segments:
+            if hasattr(seg, "text"):
+                text_parts.append(seg.text)
+            elif isinstance(seg, dict) and "text" in seg:
+                text_parts.append(seg["text"])
+
+        text = " ".join(text_parts).strip()
+
+        if not text:
+            logger.warning(f"Empty transcript for {video_id}")
+            return None
+
         if len(text) > 30000:
             text = text[:30000] + "\n\n[transcript truncated]"
-        logger.info(f"Fetched transcript for {video_id} via legacy API ({len(text)} chars)")
+
+        logger.info(f"Fetched transcript for {video_id} ({len(text)} chars)")
         return text
-    except Exception as e:
-        err = str(e).lower()
-        if any(kw in err for kw in ("disabled", "unavailable", "no transcript", "private")):
-            logger.warning(f"Transcript unavailable for {video_id}: {e}")
-            return None
-        logger.error(f"Legacy API also failed for {video_id}: {e}")
+
+    except (TranscriptsDisabled,):
+        logger.warning(f"Transcripts disabled for {video_id}")
         return None
-
+    except (NoTranscriptFound,):
+        logger.warning(f"No transcript found for {video_id}")
+        return None
+    except (VideoUnavailable,):
+        logger.warning(f"Video unavailable: {video_id}")
+        return None
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "blocked" in err_msg or "ip" in err_msg or "requestblocked" in err_msg:
+            logger.error(f"IP blocked by YouTube for {video_id}: {e}")
+            raise RuntimeError(
+                "YouTube is blocking our requests (IP block). "
+                "This usually resolves on its own after a while, or try a different network. "
+                "See: https://github.com/jdepoix/youtube-transcript-api#working-around-ip-bans"
+            )
+        logger.error(f"Transcript fetch failed for {video_id}: {e}")
+        return None

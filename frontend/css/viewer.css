@@ -158,13 +158,13 @@
    ============================================================ */
 
 .notebook-outer {
-  position: absolute;
-  top: 0;
-  left: 0; right: 0; bottom: 0;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--surface-sunk);
   -webkit-overflow-scrolling: touch;
+  position: relative;  /* for sticky toolbar */
 }
 
 .notebook-toolbar {
@@ -360,11 +360,6 @@
   .ai-fab,
   .viewer-toolbar { display: none !important; }
 
-  .notebook-outer {
-    position: static !important;
-    overflow: visible !important;
-    background: white !important;
-  }
 
   .notebook-pages {
     padding: 0 !important;

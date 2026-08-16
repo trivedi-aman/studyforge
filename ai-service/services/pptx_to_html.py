@@ -1,6 +1,9 @@
 """
-PPTX → HTML for previewing generated presentations inside Studyforge.
-Mirrors backend/core/converter.py logic — same visual output.
+PPTX → HTML preview.
+Strategy: render slides at their NATIVE pixel size (positions/sizes/fonts all
+in pixels), then use CSS transform: scale() on a wrapper to fit the viewport.
+This is how professional slide viewers (Google Slides, Office Online) work —
+container queries and percentage layout are fragile, absolute pixel sizing is not.
 """
 import base64
 import io
@@ -18,46 +21,55 @@ def pptx_to_html(file_bytes: bytes) -> str:
 
     slide_w_emu = prs.slide_width or Emu(9144000)
     slide_h_emu = prs.slide_height or Emu(6858000)
-    slide_w_px = int(slide_w_emu / 9525)
-    slide_h_px = int(slide_h_emu / 9525)
+
+    # EMU → pixels at 96 DPI (1 inch = 914400 EMU = 96 px, so 1 EMU = 96/914400)
+    slide_w_px = slide_w_emu * 96 / 914400
+    slide_h_px = slide_h_emu * 96 / 914400
 
     slides_html = []
     for idx, slide in enumerate(prs.slides, 1):
-        bg_style = "background: white;"
+        bg_style = "background:#ffffff;"
         try:
             bg = slide.background
             if bg and bg.fill and bg.fill.type is not None:
                 fc = bg.fill.fore_color
                 if fc and fc.rgb:
-                    bg_style = f"background: #{fc.rgb};"
+                    bg_style = f"background:#{fc.rgb};"
         except Exception:
             pass
 
         parts = []
         for shape in slide.shapes:
-            p = _render_shape(shape, slide_w_emu, slide_h_emu)
+            p = _render_shape(shape, slide_w_emu, slide_h_emu, slide_w_px, slide_h_px)
             if p:
                 parts.append(p)
 
         slides_html.append(f"""
         <div class="slide-wrap">
           <div class="slide-num">Slide {idx}</div>
-          <div class="slide" style="{bg_style}">{"".join(parts)}</div>
+          <div class="slide-scaler">
+            <div class="slide" style="{bg_style} width:{slide_w_px:.1f}px; height:{slide_h_px:.1f}px;">
+              {"".join(parts)}
+            </div>
+          </div>
         </div>
         """)
 
-    body = f'<div class="slides-container" style="--slide-w:{slide_w_px}px; --slide-h:{slide_h_px}px;">{"".join(slides_html)}</div>'
-    return _wrap_html(body)
+    body = f'<div class="slides-container">{"".join(slides_html)}</div>'
+    return _wrap_html(body, slide_w_px, slide_h_px)
 
 
-def _render_shape(shape, sw, sh):
+def _render_shape(shape, sw_emu, sh_emu, sw_px, sh_px):
     if not hasattr(shape, "left") or shape.left is None:
         return ""
-    left = (shape.left / sw) * 100
-    top = (shape.top / sh) * 100
-    w = (shape.width / sw) * 100
-    h = (shape.height / sh) * 100
-    pos = f"left:{left:.3f}%;top:{top:.3f}%;width:{w:.3f}%;height:{h:.3f}%;"
+
+    # Convert EMU positions/sizes to pixels
+    left_px = shape.left * 96 / 914400
+    top_px = shape.top * 96 / 914400
+    w_px = shape.width * 96 / 914400
+    h_px = shape.height * 96 / 914400
+
+    pos = f"left:{left_px:.1f}px;top:{top_px:.1f}px;width:{w_px:.1f}px;height:{h_px:.1f}px;"
 
     fill_style = ""
     try:
@@ -80,15 +92,16 @@ def _render_shape(shape, sw, sh):
 
     # Text frame
     if shape.has_text_frame:
-        return f'<div class="shape shape-text" style="{pos}{fill_style}">{_text_frame_html(shape.text_frame, sw)}</div>'
+        text_html = _text_frame_html(shape.text_frame)
+        return f'<div class="shape shape-text" style="{pos}{fill_style}">{text_html}</div>'
 
-    # Plain filled shape (accent bars, etc.)
+    # Plain filled shape (accent bars, sidebars, etc.)
     if fill_style:
-        return f'<div class="shape" style="{pos}{fill_style}"></div>'
+        return f'<div class="shape shape-fill" style="{pos}{fill_style}"></div>'
     return ""
 
 
-def _text_frame_html(tf, slide_w_emu):
+def _text_frame_html(tf):
     paras = []
     for para in tf.paragraphs:
         if not para.runs:
@@ -101,15 +114,10 @@ def _text_frame_html(tf, slide_w_emu):
                 continue
             styles = []
 
-            # Font size — as a % of slide width (via cqw)
-            # If no size on run, use a sensible default of 18pt equivalent
-            if run.font.size:
-                pt = run.font.size.pt
-            else:
-                pt = 18  # fallback default
-            slide_w_pt = slide_w_emu / 12700
-            pct = (pt / slide_w_pt) * 100
-            styles.append(f"font-size:{pct:.3f}cqw")
+            # Font size in pixels (1 pt = 1.333 px at 96 DPI)
+            pt_size = run.font.size.pt if run.font.size else 18
+            px_size = pt_size * 1.333
+            styles.append(f"font-size:{px_size:.1f}px")
 
             if run.font.bold:
                 styles.append("font-weight:700")
@@ -125,7 +133,7 @@ def _text_frame_html(tf, slide_w_emu):
             sattr = f' style="{";".join(styles)}"' if styles else ""
             runs.append(f'<span{sattr}>{text}</span>')
 
-        pstyles = ["margin:0"]
+        pstyles = ["margin:0", "line-height:1.25"]
         if para.alignment is not None:
             m = {1: "center", 2: "right", 3: "justify"}
             if para.alignment in m:
@@ -135,19 +143,96 @@ def _text_frame_html(tf, slide_w_emu):
     return "".join(paras)
 
 
-def _wrap_html(body):
+def _wrap_html(body, slide_w_px, slide_h_px):
     return f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
-*{{box-sizing:border-box}}html,body{{margin:0;padding:0}}
-body{{background:#f3f2ef;padding:24px;font-family:'Calibri','Segoe UI',Arial,sans-serif}}
-.slides-container{{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:28px}}
-.slide-wrap{{display:flex;flex-direction:column;gap:8px}}
-.slide-num{{font-family:'JetBrains Mono',monospace;font-size:11px;color:#6e6e78;padding:0 4px;text-transform:uppercase;letter-spacing:0.05em}}
-.slide{{position:relative;width:100%;aspect-ratio:var(--slide-w)/var(--slide-h);background:white;box-shadow:0 4px 24px rgba(0,0,0,0.12);border-radius:6px;overflow:hidden;container-type:inline-size}}
-.shape{{position:absolute;overflow:hidden}}
-.shape-text{{padding:0.4cqw;display:flex;flex-direction:column;justify-content:flex-start}}
-.shape-text p{{line-height:1.25;margin:0 0 0.25em 0;font-size:2.2cqw}}
-.shape-text span{{display:inline}}
-.shape-image img{{width:100%;height:100%;object-fit:contain;display:block}}
-</style></head><body>{body}</body></html>"""
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; }}
+body {{
+  background: #f3f2ef;
+  padding: 24px;
+  font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+}}
+.slides-container {{
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}}
+.slide-wrap {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}}
+.slide-num {{
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #6e6e78;
+  padding: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}}
+/* Scaler wraps the native-sized slide and scales it down to fit the container */
+.slide-scaler {{
+  width: 100%;
+  aspect-ratio: {slide_w_px:.0f} / {slide_h_px:.0f};
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+}}
+.slide {{
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  /* JS below sets transform: scale() based on container width */
+}}
+.shape {{
+  position: absolute;
+  overflow: hidden;
+}}
+.shape-text {{
+  padding: 4px;
+}}
+.shape-text p {{
+  margin: 0;
+  line-height: 1.25;
+}}
+.shape-text span {{ display: inline; }}
+.shape-image img {{
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}}
+</style>
+</head>
+<body>
+{body}
+<script>
+// Scale each slide to fit its container width
+function scaleSlides() {{
+  const NATIVE_W = {slide_w_px:.0f};
+  document.querySelectorAll('.slide-scaler').forEach(scaler => {{
+    const slide = scaler.querySelector('.slide');
+    if (!slide) return;
+    const scale = scaler.clientWidth / NATIVE_W;
+    slide.style.transform = 'scale(' + scale + ')';
+  }});
+}}
+scaleSlides();
+window.addEventListener('resize', scaleSlides);
+// Rescale after fonts load (font sizes affect nothing here, but just in case)
+if (document.fonts) {{
+  document.fonts.ready.then(scaleSlides);
+}}
+</script>
+</body>
+</html>"""
