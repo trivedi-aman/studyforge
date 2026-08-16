@@ -1,7 +1,6 @@
 // ============================================================
-// AI MAGIC PANEL — everything routes through one chat-like feed.
-// Embedding happens lazily on first real AI use per document
-// (README 2.7) — never automatically on open/upload.
+// AI MAGIC PANEL — inline side panel, not overlay.
+// Opens by expanding the panel width and collapsing the sidebar.
 // ============================================================
 
 import { Documents, AI } from './api.js';
@@ -11,23 +10,23 @@ import { escapeHtml, formatDate } from './ui-helpers.js';
 import { toast } from './toast.js';
 import { pollJob } from './jobs.js';
 
-let panelEl, scrimEl;
+let panelEl;
 const embeddedDocs = new Set();
 
-export function initAiPanel(root) {
-  scrimEl = document.createElement('div');
-  scrimEl.className = 'ai-panel-scrim';
-  panelEl = document.createElement('div');
-  panelEl.className = 'ai-panel';
-  root.appendChild(scrimEl);
-  root.appendChild(panelEl);
-  scrimEl.addEventListener('click', closeAiPanel);
+export function initAiPanel(container) {
+  panelEl = container;
 }
 
 export async function openAiPanel(documentId, opts = {}) {
   const doc = await Documents.get(documentId);
   set({ aiPanelOpen: true, aiPanelDocId: documentId });
-  if (!state.chatSessions[documentId]) state.chatSessions[documentId] = { sessionId: null, messages: [] };
+  if (!state.chatSessions[documentId]) {
+    state.chatSessions[documentId] = { sessionId: null, messages: [] };
+  }
+
+  // Collapse sidebar, expand AI panel
+  const shell = document.querySelector('.shell');
+  if (shell) shell.classList.add('ai-panel-open');
 
   panelEl.innerHTML = `
     <div class="ai-panel__header">
@@ -43,9 +42,12 @@ export async function openAiPanel(documentId, opts = {}) {
       <button class="btn btn--accent btn--icon" id="ai-composer-send">${Icon.send}</button>
     </div>
   `;
+
   panelEl.querySelector('#ai-panel-close').addEventListener('click', closeAiPanel);
 
-  requestAnimationFrame(() => { panelEl.classList.add('open'); scrimEl.classList.add('open'); });
+  requestAnimationFrame(() => {
+    panelEl.classList.add('open');
+  });
 
   renderThread(doc);
   wireComposer(doc);
@@ -57,12 +59,16 @@ export async function openAiPanel(documentId, opts = {}) {
 
 export function closeAiPanel() {
   panelEl.classList.remove('open');
-  scrimEl.classList.remove('open');
   set({ aiPanelOpen: false });
+
+  // Restore sidebar
+  const shell = document.querySelector('.shell');
+  if (shell) shell.classList.remove('ai-panel-open');
 }
 
 function renderThread(doc) {
   const body = panelEl.querySelector('#ai-panel-body');
+  if (!body) return;
   const session = state.chatSessions[doc.id];
   const hasMessages = session.messages.length > 0;
 
@@ -107,14 +113,13 @@ function msgHTML(m) {
   return `
     <div class="chat-msg chat-msg--${m.role}">
       <div class="chat-msg__avatar">${m.role === 'user' ? (state.user?.email || 'U')[0].toUpperCase() : '✦'}</div>
-      <div class="chat-msg__bubble">${m.typing ? typingHTML() : formatChatText(m.content)}</div>
+      <div class="chat-msg__bubble${m.typing ? ' typing' : ''}">${m.typing ? typingHTML() : formatChatText(m.content)}</div>
     </div>`;
 }
 
 function typingHTML() { return `<span></span><span></span><span></span>`; }
 
 function jobCardHTML(m) {
-  const icons = { processing: Icon.generate, done: Icon.chatBubble, failed: Icon.close };
   return `
     <div class="job-card">
       <div class="job-card__head">
@@ -135,21 +140,34 @@ function formatChatText(text) {
 function wireComposer(doc) {
   const input = panelEl.querySelector('#ai-composer-input');
   const send = panelEl.querySelector('#ai-composer-send');
+  if (!input || !send) return;
+
   const submit = () => {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
+    input.style.height = 'auto';
     sendChatMessage(doc, text);
   };
   send.addEventListener('click', submit);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
-  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 100) + 'px'; });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 100) + 'px';
+  });
 }
 
 async function ensureEmbedded(doc) {
   if (embeddedDocs.has(doc.id)) return;
-  await AI.embedDocument(doc.id); // lazy — only ever called on first real AI use (README 2.7)
-  embeddedDocs.add(doc.id);
+  try {
+    await AI.embedDocument(doc.id);
+    embeddedDocs.add(doc.id);
+  } catch (e) {
+    console.warn('Embed failed (AI service may not be running):', e.message);
+    // Don't block — the chat will still work, just without RAG context
+  }
 }
 
 async function handleAction(doc, action) {
@@ -204,7 +222,10 @@ async function runWithTyping(doc, fn, skipUserPush = false) {
     session.messages.push({ role: 'assistant', content: result });
   } catch (e) {
     session.messages = session.messages.filter((m) => m !== typingMsg);
-    session.messages.push({ role: 'assistant', content: "Something went wrong reaching the AI service — try again in a moment." });
+    const msg = e.message?.includes('503')
+      ? 'The AI service is not running yet. This feature will be available once the AI microservice is deployed.'
+      : "Something went wrong reaching the AI service — try again in a moment.";
+    session.messages.push({ role: 'assistant', content: msg });
   }
   renderThread(doc);
 }
@@ -215,21 +236,31 @@ async function startGenerateNotesJob(doc) {
   session.messages.push(jobMsg);
   renderThread(doc);
 
-  const { job_id } = await AI.startPptToNotes(doc.id, doc.folder_id);
-  pollJob(job_id, (job) => {
-    jobMsg.status = job.status;
-    if (job.status === 'done') { jobMsg.resultDocId = job.result_document_id; toast('Notes generated', 'success'); }
-    if (job.status === 'failed') { jobMsg.error = job.error_message; toast('Generation failed', 'danger'); }
+  try {
+    const { job_id } = await AI.startPptToNotes(doc.id, doc.folder_id);
+    pollJob(job_id, (job) => {
+      jobMsg.status = job.status;
+      if (job.status === 'done') { jobMsg.resultDocId = job.result_document_id; toast('Notes generated', 'success'); }
+      if (job.status === 'failed') { jobMsg.error = job.error_message; toast('Generation failed', 'danger'); }
+      renderThread(doc);
+      if (job.status === 'done' || job.status === 'failed') {
+        const body = panelEl.querySelector('#ai-panel-body');
+        if (body) {
+          body.querySelectorAll('[data-open-doc]').forEach((el) => {
+            el.addEventListener('click', async () => {
+              const { openDocument } = await import('./viewer.js');
+              closeAiPanel();
+              openDocument(el.dataset.openDoc);
+            });
+          });
+        }
+      }
+    });
+  } catch (e) {
+    jobMsg.status = 'failed';
+    jobMsg.error = e.message?.includes('503')
+      ? 'AI service is not running yet.'
+      : e.message || 'Failed to start job.';
     renderThread(doc);
-    if (job.status === 'done' || job.status === 'failed') {
-      const body = panelEl.querySelector('#ai-panel-body');
-      body.querySelectorAll('[data-open-doc]').forEach((el) => {
-        el.addEventListener('click', async () => {
-          const { openDocument } = await import('./viewer.js');
-          closeAiPanel();
-          openDocument(el.dataset.openDoc);
-        });
-      });
-    }
-  });
+  }
 }

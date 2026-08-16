@@ -3,7 +3,7 @@
 // implements the full PDF study-viewer experience (README 2.2).
 // ============================================================
 
-import { Documents, Annotations, MOCK_MODE, S3_PUBLIC_BASE_URL, AI } from './api.js';
+import { Documents, Annotations, AI, MOCK_MODE, MAIN_BACKEND_URL, S3_PUBLIC_BASE_URL } from './api.js';
 import { state, set } from './state.js';
 import { Icon } from './icons.js';
 import { openModal, openContextMenu, escapeHtml, formatBytes, formatDate } from './ui-helpers.js';
@@ -14,12 +14,9 @@ import { openAiPanel } from './ai-panel.js';
 
 const TYPE_ICON = { pdf: Icon.filePdf, pptx: Icon.fileSlides, docx: Icon.file, xlsx: Icon.file, image: Icon.fileImage, txt: Icon.file, md: Icon.notes };
 
-// Module-level cleanup registry — ensures we never leak observers or state
-// across document opens.
 let _cleanup = null;
 
 export async function openDocument(docId) {
-  // Run any cleanup from the previously open document
   if (_cleanup) { _cleanup(); _cleanup = null; }
 
   const doc = await Documents.get(docId);
@@ -63,6 +60,11 @@ export async function openDocument(docId) {
     renderImageViewer(body, doc);
   } else if (doc.file_type === 'txt') {
     renderTextViewer(body, doc);
+  } else if (
+    ['docx', 'pptx', 'xlsx'].includes(doc.file_type) &&
+    !doc.preview_pdf_s3_key
+  ) {
+    renderNoPreviewYet(body, doc);
   } else {
     await renderPdfViewer(body, doc);
   }
@@ -71,7 +73,7 @@ export async function openDocument(docId) {
 function buildFileActionsMenu(doc) {
   return [
     { label: 'Document info', icon: Icon.info, action: 'info', onClick: () => showDocInfo(doc) },
-    { label: 'Download original', icon: Icon.download, action: 'download', onClick: () => toast(`Downloading ${doc.filename}…`, 'info') },
+    { label: 'Download original', icon: Icon.download, action: 'download', onClick: () => downloadOriginal(doc) },
     { label: 'Version history', icon: Icon.history, action: 'history', onClick: () => showVersionHistory(doc) },
     { type: 'sep' },
     { label: 'Replace file', icon: Icon.upload, action: 'replace', onClick: () => promptReplaceFile(doc) },
@@ -79,6 +81,27 @@ function buildFileActionsMenu(doc) {
     { type: 'sep' },
     { label: 'Delete', icon: Icon.trash, action: 'delete', danger: true, onClick: () => confirmDelete(doc) },
   ];
+}
+
+async function downloadOriginal(doc) {
+  try {
+    if (MOCK_MODE) { toast(`Downloading ${doc.filename}…`, 'info'); return; }
+    const res = await fetch(`${MAIN_BACKEND_URL}/documents/${doc.id}/download`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('sf_access_token')}` },
+    });
+    if (!res.ok) throw new Error('Download failed');
+    const { url } = await res.json();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = doc.filename;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Download started', 'success');
+  } catch (e) {
+    toast(`Download failed: ${e.message}`, 'danger');
+  }
 }
 
 function showDocInfo(doc) {
@@ -160,14 +183,35 @@ function confirmDelete(doc) {
 // Simple viewers (image / txt)
 // ============================================================
 function renderImageViewer(body, doc) {
+  let imgSrc;
+  if (MOCK_MODE) {
+    imgSrc = placeholderImageSvg(doc.filename);
+  } else {
+    // For real images, we need a presigned URL
+    imgSrc = `<div id="image-loading" style="color:var(--text-500);">Loading image…</div>`;
+  }
+
   body.innerHTML = `
     <div class="viewer">
       <div class="viewer-toolbar">
         <div class="viewer-toolbar__filename">${Icon.fileImage}<span>${escapeHtml(doc.filename)}</span></div>
         <div></div>
       </div>
-      <div class="simple-viewer">${placeholderImageSvg(doc.filename)}</div>
+      <div class="simple-viewer" id="image-container">${MOCK_MODE ? imgSrc : '<div style="color:var(--text-500);">Loading image…</div>'}</div>
     </div>`;
+
+  if (!MOCK_MODE) {
+    fetch(`${MAIN_BACKEND_URL}/documents/${doc.id}/view-url`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('sf_access_token')}` },
+    })
+      .then((r) => r.json())
+      .then(({ url }) => {
+        body.querySelector('#image-container').innerHTML = `<img src="${url}" alt="${escapeHtml(doc.filename)}" />`;
+      })
+      .catch(() => {
+        body.querySelector('#image-container').innerHTML = placeholderImageSvg(doc.filename);
+      });
+  }
 }
 
 function placeholderImageSvg(name) {
@@ -180,29 +224,42 @@ function placeholderImageSvg(name) {
 }
 
 function renderTextViewer(body, doc) {
+  if (MOCK_MODE) {
+    body.innerHTML = `
+      <div class="viewer">
+        <div class="viewer-toolbar"><div class="viewer-toolbar__filename">${Icon.file}<span>${escapeHtml(doc.filename)}</span></div><div></div></div>
+        <div class="simple-viewer"><pre>Mock text preview of ${escapeHtml(doc.filename)}.</pre></div>
+      </div>`;
+    return;
+  }
+
   body.innerHTML = `
     <div class="viewer">
-      <div class="viewer-toolbar">
-        <div class="viewer-toolbar__filename">${Icon.file}<span>${escapeHtml(doc.filename)}</span></div>
-        <div></div>
-      </div>
-      <div class="simple-viewer"><pre>Plain-text preview of ${escapeHtml(doc.filename)}.
-
-This is a stand-in for the real file content, rendered exactly as uploaded — no formatting, no conversion needed for .txt files.</pre></div>
+      <div class="viewer-toolbar"><div class="viewer-toolbar__filename">${Icon.file}<span>${escapeHtml(doc.filename)}</span></div><div></div></div>
+      <div class="simple-viewer"><pre id="txt-content">Loading…</pre></div>
     </div>`;
+
+  fetch(`${MAIN_BACKEND_URL}/documents/${doc.id}/view-url`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem('sf_access_token')}` },
+  })
+    .then((r) => r.json())
+    .then(({ url }) => fetch(url))
+    .then((r) => r.text())
+    .then((text) => {
+      body.querySelector('#txt-content').textContent = text;
+    })
+    .catch(() => {
+      body.querySelector('#txt-content').textContent = 'Could not load file content.';
+    });
 }
 
 // ============================================================
 // PDF viewer
 // ============================================================
 
-// Single PDF state object — always reset before a new document loads.
-// Keeping it module-level (rather than closure-local) lets toolbar
-// callbacks and annotation handlers reach it without prop-drilling.
 let pdfState = null;
 
 async function renderPdfViewer(body, doc) {
-  // Reset state fully before rendering a new document
   pdfState = null;
 
   body.innerHTML = `
@@ -245,6 +302,7 @@ async function renderPdfViewer(body, doc) {
           <div class="empty-state" style="height:100%;">
             <div class="empty-state__icon">${Icon.filePdf}</div>
             <div class="empty-state__title">Loading document…</div>
+            <div class="empty-state__desc">Fetching from storage…</div>
           </div>
         </div>
       </div>
@@ -255,14 +313,41 @@ async function renderPdfViewer(body, doc) {
   const viewerRoot = body.querySelector('#pdf-viewer-root');
   viewerRoot.querySelector('#ai-fab-btn').addEventListener('click', () => openAiPanel(doc.id));
 
-  // Load the PDF
-  const url = await loadPdfUrl(doc);
-  const pdfjsLib = window.pdfjsLib;
+  let url;
+  try {
+    url = await loadPdfUrl(doc);
+  } catch (err) {
+    console.error('loadPdfUrl failed:', err);
+    viewerRoot.querySelector('#viewer-scroll').innerHTML = `
+      <div class="empty-state" style="height:100%;">
+        <div class="empty-state__icon">${Icon.filePdf}</div>
+        <div class="empty-state__title">Couldn't get file URL</div>
+        <div class="empty-state__desc">${escapeHtml(err.message || 'Failed to fetch the document URL from the server.')}</div>
+      </div>`;
+    return;
+  }
 
+  const pdfjsLib = window.pdfjsLib;
   let pdf;
   try {
-    const loadingTask = pdfjsLib.getDocument(url);
+    console.log('Loading PDF from:', url.substring(0, 80) + '…');
+    const loadingTask = pdfjsLib.getDocument({
+      url,
+      withCredentials: false,
+      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+      cMapPacked: true,
+    });
+
+    loadingTask.onProgress = (progress) => {
+      if (progress.total > 0) {
+        const pct = Math.round((progress.loaded / progress.total) * 100);
+        const descEl = viewerRoot.querySelector('.empty-state__desc');
+        if (descEl) descEl.textContent = `Loading… ${pct}%`;
+      }
+    };
+
     pdf = await loadingTask.promise;
+    console.log('PDF loaded, pages:', pdf.numPages);
   } catch (err) {
     console.error('PDF load error:', err);
     viewerRoot.querySelector('#viewer-scroll').innerHTML = `
@@ -274,43 +359,58 @@ async function renderPdfViewer(body, doc) {
     return;
   }
 
-  // Initialise state AFTER successful load
   pdfState = {
     pdf,
     doc,
     scale: 1.2,
-    matches: [],       // page numbers that contain the search term
+    matches: [],
     matchIndex: -1,
-    textCache: {},     // pageNum -> plain text string
-    observer: null,    // IntersectionObserver — stored so we can disconnect on cleanup
-    rendering: false,  // guard against concurrent rescale calls
+    textCache: {},
+    observer: null,
+    rendering: false,
   };
 
   viewerRoot.querySelector('#tb-total').textContent = pdf.numPages;
 
-  // Hide thumb rail for single-page docs
   if (pdf.numPages === 1) {
     viewerRoot.querySelector('#viewer-thumbs').style.display = 'none';
   }
 
   await renderAllPages(viewerRoot);
-  renderThumbnails(viewerRoot);   // fire-and-forget — thumbs render async in background
+  renderThumbnails(viewerRoot);
   wireToolbar(viewerRoot, doc);
   wirePageObserver(viewerRoot);
   await loadAndRenderAnnotations(viewerRoot, doc);
 
-  // Register cleanup so the next openDocument() call tears everything down
   _cleanup = () => {
-    if (pdfState?.observer) { pdfState.observer.disconnect(); }
+    if (pdfState?.observer) pdfState.observer.disconnect();
     pdfState = null;
   };
 }
 
 async function loadPdfUrl(doc) {
   if (MOCK_MODE) return generateMockPdfUrl(doc);
-  // Real mode: prefer the normalized preview PDF; fall back to the original
-  const key = doc.preview_pdf_s3_key || doc.original_s3_key;
-  return `${S3_PUBLIC_BASE_URL}/${key}`;
+
+  try {
+    const res = await fetch(`${MAIN_BACKEND_URL}/documents/${doc.id}/view-url`, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('sf_access_token')}`,
+      },
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('view-url failed:', res.status, err);
+      throw new Error(`Failed to get document URL: ${res.status}`);
+    }
+
+    const data = await res.json();
+    console.log('Got presigned URL for:', data.filename || doc.filename);
+    return data.url;
+  } catch (e) {
+    console.error('loadPdfUrl error:', e);
+    throw e;
+  }
 }
 
 function generateMockPdfUrl(doc) {
@@ -322,28 +422,28 @@ function generateMockPdfUrl(doc) {
       h: doc.filename.replace(/\.[^.]+$/, ''),
       body: [
         'This is a demo preview — in the real app this renders the actual uploaded or converted PDF from S3.',
-        'The viewer is fully functional: navigation, zoom, thumbnails, in-document search, text selection, and highlight/sticky-note annotations all work against this generated PDF exactly as they will against real files.',
+        'The viewer is fully functional: navigation, zoom, thumbnails, in-document search, text selection, and highlight/sticky-note annotations all work.',
       ],
     },
     {
       h: 'Section 1 — Navigation & Zoom',
       body: [
         'Use the arrow buttons in the toolbar to move between pages, or click any thumbnail in the left rail.',
-        'Zoom in and out with the magnifier buttons. The page number input also accepts direct entry — type a number and press Enter.',
+        'Zoom in and out with the magnifier buttons. The page number input also accepts direct entry.',
       ],
     },
     {
       h: 'Section 2 — Search & Annotations',
       body: [
-        'Click the search icon to open the in-document search bar. Try searching for "annotations" or "zoom" — matching pages are highlighted in the counter.',
+        'Click the search icon to open the in-document search bar. Try searching for "annotations" or "zoom".',
         'Select any text on this page — a small toolbar appears letting you highlight it in one of four colours, add a sticky note, or explain it with AI.',
       ],
     },
     {
       h: 'Section 3 — AI Magic',
       body: [
-        'The purple "AI Magic" button in the bottom-right corner opens the AI panel scoped to this document. Nothing runs automatically — every AI call is explicit.',
-        'From the panel you can ask questions about this document, get a summary, explain selected text, or generate structured Markdown study notes.',
+        'The purple "AI Magic" button in the bottom-right corner opens the AI panel scoped to this document.',
+        'From the panel you can ask questions, get a summary, explain selected text, or generate structured Markdown study notes.',
       ],
     },
   ];
@@ -383,14 +483,12 @@ async function renderAllPages(viewerRoot) {
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale });
 
-    // Outer wrapper — sized in CSS pixels
     const pageEl = document.createElement('div');
     pageEl.className = 'viewer-page';
     pageEl.dataset.page = pageNum;
     pageEl.style.width = `${viewport.width}px`;
     pageEl.style.height = `${viewport.height}px`;
 
-    // Canvas — rendered at device pixel ratio for sharp text on HiDPI screens
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width * devicePixelRatio);
     canvas.height = Math.floor(viewport.height * devicePixelRatio);
@@ -403,18 +501,15 @@ async function renderAllPages(viewerRoot) {
     await page.render({ canvasContext: ctx, viewport }).promise;
     pageEl.appendChild(canvas);
 
-    // Text layer — transparent overlay for selection & search
     const textLayerDiv = document.createElement('div');
     textLayerDiv.className = 'textLayer';
     textLayerDiv.style.cssText = `width:${viewport.width}px; height:${viewport.height}px;`;
     pageEl.appendChild(textLayerDiv);
 
-    // Extract plain text for search cache
     try {
       const textContent = await page.getTextContent();
       pdfState.textCache[pageNum] = textContent.items.map((it) => it.str).join(' ');
 
-      // pdf.js 3.x text layer API
       const textLayerObj = new pdfjsLib.renderTextLayer({
         textContentSource: textContent,
         container: textLayerDiv,
@@ -422,24 +517,20 @@ async function renderAllPages(viewerRoot) {
       });
       await textLayerObj.promise;
     } catch (textErr) {
-      // Text layer is optional — canvas render already succeeded
       console.warn(`Text layer page ${pageNum}:`, textErr);
     }
 
-    // Annotation layer — pointer-events on; sits above text layer
     const annotLayer = document.createElement('div');
     annotLayer.className = 'annot-layer';
     annotLayer.style.cssText = 'position:absolute; inset:0; pointer-events:none;';
     pageEl.appendChild(annotLayer);
 
-    // Wire text selection → annotation popover
     pageEl.addEventListener('mouseup', () => handleTextSelection(viewerRoot, pageEl, pageNum));
 
     scroll.appendChild(pageEl);
   }
 }
 
-// Thumbnails rendered at a low scale asynchronously — don't await in the main flow
 async function renderThumbnails(viewerRoot) {
   const thumbsEl = viewerRoot.querySelector('#viewer-thumbs');
   thumbsEl.innerHTML = '';
@@ -447,7 +538,6 @@ async function renderThumbnails(viewerRoot) {
   const THUMB_SCALE = 0.18;
 
   for (let i = 1; i <= pdf.numPages; i++) {
-    // Guard: viewer might have been torn down while thumbs were rendering
     if (!pdfState || pdfState.pdf !== pdf) return;
 
     const page = await pdf.getPage(i);
@@ -503,7 +593,6 @@ function wireToolbar(viewerRoot, doc) {
     jumpToPage(viewerRoot, n);
   });
 
-  // Zoom
   viewerRoot.querySelector('#tb-zoomin').addEventListener('click', () => {
     if (!pdfState || pdfState.rendering) return;
     rescale(viewerRoot, Math.min(pdfState.scale + 0.2, 3.0));
@@ -513,13 +602,11 @@ function wireToolbar(viewerRoot, doc) {
     rescale(viewerRoot, Math.max(pdfState.scale - 0.2, 0.4));
   });
 
-  // Fullscreen
   viewerRoot.querySelector('#tb-fullscreen').addEventListener('click', () => {
     if (!document.fullscreenElement) viewerRoot.requestFullscreen?.();
     else document.exitFullscreen?.();
   });
 
-  // Search
   const searchBar = viewerRoot.querySelector('#viewer-search');
   const searchInput = viewerRoot.querySelector('#search-input');
 
@@ -536,7 +623,6 @@ function wireToolbar(viewerRoot, doc) {
   viewerRoot.querySelector('#search-next').addEventListener('click', () => stepMatch(viewerRoot, 1));
   viewerRoot.querySelector('#search-prev').addEventListener('click', () => stepMatch(viewerRoot, -1));
 
-  // Keyboard shortcut — Ctrl/Cmd+F opens search
   const kbHandler = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
@@ -545,7 +631,7 @@ function wireToolbar(viewerRoot, doc) {
     }
   };
   document.addEventListener('keydown', kbHandler);
-  // Store for cleanup
+
   const existingCleanup = _cleanup;
   _cleanup = () => {
     document.removeEventListener('keydown', kbHandler);
@@ -561,21 +647,17 @@ async function rescale(viewerRoot, newScale) {
   const zoomLabel = viewerRoot.querySelector('#tb-zoomlevel');
   if (zoomLabel) zoomLabel.textContent = `${Math.round((newScale / 1.2) * 100)}%`;
 
-  // Disconnect old observer before re-rendering pages
   if (pdfState.observer) {
     pdfState.observer.disconnect();
     pdfState.observer = null;
   }
 
-  // Remember which page we were on so we can scroll back to it
   const pageInput = viewerRoot.querySelector('#tb-pagenum');
   const currentPage = parseInt(pageInput?.value, 10) || 1;
 
   await renderAllPages(viewerRoot);
   await loadAndRenderAnnotations(viewerRoot, pdfState.doc);
   wirePageObserver(viewerRoot);
-
-  // Scroll back to where we were
   jumpToPage(viewerRoot, currentPage);
 
   pdfState.rendering = false;
@@ -585,8 +667,6 @@ async function rescale(viewerRoot, newScale) {
 
 function wirePageObserver(viewerRoot) {
   if (!pdfState) return;
-
-  // Disconnect any previous observer
   if (pdfState.observer) pdfState.observer.disconnect();
 
   const scroll = viewerRoot.querySelector('#viewer-scroll');
@@ -594,7 +674,6 @@ function wirePageObserver(viewerRoot) {
 
   const observer = new IntersectionObserver(
     (entries) => {
-      // Pick the page with the highest intersection ratio that is actually visible
       let best = null;
       for (const entry of entries) {
         if (entry.isIntersecting) {
@@ -677,7 +756,6 @@ function renderAnnotation(viewerRoot, a) {
     pin.innerHTML = Icon.stickyNote;
     pin.title = a.content || '';
     pin.addEventListener('click', (e) => showAnnotInfo(e, a, viewerRoot));
-    layer.style.pointerEvents = 'none';
     layer.appendChild(pin);
   } else {
     const hl = document.createElement('div');
@@ -702,7 +780,6 @@ function showAnnotInfo(e, a, viewerRoot) {
   const pop = document.createElement('div');
   pop.className = 'annot-popover';
 
-  // Clamp to viewport
   const x = Math.min(e.clientX, window.innerWidth - 240);
   const y = Math.min(e.clientY + 8, window.innerHeight - 120);
   pop.style.cssText = `left:${x}px; top:${y}px; flex-direction:column; align-items:flex-start; max-width:220px;`;
@@ -735,19 +812,76 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   if (!sel || sel.isCollapsed || !sel.toString().trim()) return;
 
   const range = sel.getRangeAt(0);
-  const rawRects = Array.from(range.getClientRects()).filter((r) => r.width > 2 && r.height > 2);
+
+  // Check the selection is actually inside this page's text layer
+  const textLayer = pageEl.querySelector('.textLayer');
+  if (!textLayer) return;
+  if (!textLayer.contains(range.startContainer) && !textLayer.contains(range.endContainer)) return;
+
+  const rawRects = Array.from(range.getClientRects()).filter(
+    (r) => r.width > 1 && r.height > 1
+  );
   if (!rawRects.length) return;
 
   const pageRect = pageEl.getBoundingClientRect();
   const selectedText = sel.toString();
 
-  // One rect per visual line the selection covers
-  const lineRects = rawRects.map((r) => ({
+  // Deduplicate rects — PDF.js text layer often generates overlapping
+  // spans that produce duplicate/near-duplicate rects for the same text
+  const seen = new Set();
+  const uniqueRects = rawRects.filter((r) => {
+    // Round to nearest pixel to catch near-duplicates
+    const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Convert to relative coords
+  const relRects = uniqueRects.map((r) => ({
     relX: (r.left - pageRect.left) / pageRect.width,
     relY: (r.top - pageRect.top) / pageRect.height,
     relW: r.width / pageRect.width,
     relH: r.height / pageRect.height,
+    absTop: r.top,
+    absLeft: r.left,
   }));
+
+  // Merge into lines — rects within same vertical band are one line
+  // Use a threshold based on actual rect height (much more robust than fixed 3px)
+  const avgHeight = relRects.reduce((s, r) => s + r.relH, 0) / relRects.length;
+  const lineThreshold = avgHeight * 0.5; // half a line height
+
+  const lineGroups = [];
+  const sorted = [...relRects].sort((a, b) => a.absTop - b.absTop || a.absLeft - b.absLeft);
+
+  for (const rect of sorted) {
+    let merged = false;
+    for (const group of lineGroups) {
+      // Check if this rect is on the same line as the group
+      const groupAvgY = group.reduce((s, r) => s + r.relY, 0) / group.length;
+      if (Math.abs(rect.relY - groupAvgY) < lineThreshold) {
+        group.push(rect);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) lineGroups.push([rect]);
+  }
+
+  // Collapse each line group into a single bounding rect
+  const lineRects = lineGroups.map((group) => {
+    const minX = Math.min(...group.map((r) => r.relX));
+    const maxRight = Math.max(...group.map((r) => r.relX + r.relW));
+    const minY = Math.min(...group.map((r) => r.relY));
+    const maxBottom = Math.max(...group.map((r) => r.relY + r.relH));
+    return {
+      relX: minX,
+      relY: minY,
+      relW: maxRight - minX,
+      relH: maxBottom - minY,
+    };
+  });
 
   const anchorRect = rawRects[0];
 
@@ -756,7 +890,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   const pop = document.createElement('div');
   pop.className = 'annot-popover';
 
-  // Clamp popover to viewport
   const popLeft = Math.max(8, Math.min(anchorRect.left + anchorRect.width / 2 - 90, window.innerWidth - 196));
   const popTop = Math.max(8, anchorRect.top - 50);
   pop.style.cssText = `left:${popLeft}px; top:${popTop}px;`;
@@ -768,7 +901,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
   `;
   document.body.appendChild(pop);
 
-  // Highlight buttons
   pop.querySelectorAll('[data-color]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       pop.remove();
@@ -791,7 +923,6 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
     });
   });
 
-  // Sticky note button
   pop.querySelector('[data-note]').addEventListener('click', () => {
     pop.remove();
     const { close } = openModal({
@@ -821,17 +952,54 @@ function handleTextSelection(viewerRoot, pageEl, pageNumber) {
     });
   });
 
-  // Explain with AI
   pop.querySelector('[data-explain]').addEventListener('click', () => {
     pop.remove();
     sel.removeAllRanges();
     openAiPanel(state.selectedDocument.id, { explainText: selectedText });
   });
 
-  // Dismiss on outside click
   setTimeout(() => {
     document.addEventListener('mousedown', function dismiss(ev) {
-      if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); }
+      if (!pop.contains(ev.target)) {
+        pop.remove();
+        document.removeEventListener('mousedown', dismiss);
+      }
     });
   }, 0);
+}
+
+
+function renderNoPreviewYet(body, doc) {
+  body.innerHTML = `
+    <div class="viewer">
+      <div class="viewer-toolbar">
+        <div class="viewer-toolbar__filename">
+          ${TYPE_ICON[doc.file_type] || Icon.file}
+          <span>${escapeHtml(doc.filename)}</span>
+        </div>
+        <div></div>
+      </div>
+      <div class="empty-state" style="height:calc(100% - 52px);">
+        <div class="empty-state__icon">${TYPE_ICON[doc.file_type] || Icon.file}</div>
+        <div class="empty-state__title">Preview not available</div>
+        <div class="empty-state__desc">
+          This file was uploaded before server-side conversion was set up,
+          so no PDF preview exists yet. Replace the file to generate a preview,
+          or download the original.
+        </div>
+        <div style="display:flex; gap:8px; margin-top:16px;">
+          <button class="btn btn--primary" id="no-preview-download">
+            ${Icon.download} Download original
+          </button>
+          <button class="btn btn--ghost" id="no-preview-replace">
+            ${Icon.upload} Replace file
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  body.querySelector('#no-preview-download')
+    ?.addEventListener('click', () => downloadOriginal(doc));
+  body.querySelector('#no-preview-replace')
+    ?.addEventListener('click', () => promptReplaceFile(doc));
 }

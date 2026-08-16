@@ -21,7 +21,7 @@
 
 import { mockUser, mockFolders, mockDocuments, mockTags, mockNotesContent, makeJob } from './mock-data.js';
 
-export const MOCK_MODE = true;
+export const MOCK_MODE = false;
 export const MAIN_BACKEND_URL = 'http://localhost:8000'; // matches README's local dev port for main backend
 export const S3_PUBLIC_BASE_URL = 'https://your-bucket.s3.amazonaws.com'; // replace with real bucket URL when live
 
@@ -61,7 +61,16 @@ export const Auth = {
       localStorage.setItem('sf_display_name', email.split('@')[0]);
       return { user: clone(mockUser), access_token: 'mock-jwt-token' };
     }
-    return realFetch('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) });
+    const data = await realFetch('/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    // Store token immediately after signup
+    if (data.access_token) {
+      localStorage.setItem('sf_access_token', data.access_token);
+      localStorage.setItem('sf_display_name', email.split('@')[0]);
+    }
+    return data;
   },
   async signIn(email, password) {
     if (MOCK_MODE) {
@@ -69,7 +78,16 @@ export const Auth = {
       localStorage.setItem('sf_access_token', 'mock-jwt-token');
       return { user: clone(mockUser), access_token: 'mock-jwt-token' };
     }
-    return realFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    const data = await realFetch('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    // Store token immediately after login
+    if (data.access_token) {
+      localStorage.setItem('sf_access_token', data.access_token);
+      localStorage.setItem('sf_display_name', data.user?.email?.split('@')[0] || '');
+    }
+    return data;
   },
   async signOut() {
     localStorage.removeItem('sf_access_token');
@@ -223,11 +241,17 @@ export const Documents = {
     return realFetch(`/documents/${id}/versions/${versionNumber}/restore`, { method: 'POST' });
   },
   // Notes content (md) — read/save. Saving creates a new version (README 2.6).
-  async getNotesContent(id) {
-    if (MOCK_MODE) { await wait(110); return _notesContent[id] || '# Untitled Notes\n\nStart writing…'; }
-    return realFetch(`/documents/${id}/content`);
-  },
-  async saveNotesContent(id, content) {
+async getNotesContent(id) {
+  if (MOCK_MODE) { await wait(110); return _notesContent[id] || '# Untitled Notes\n\nStart writing…'; }
+  // Content endpoint returns plain text, not JSON
+  const res = await fetch(`${MAIN_BACKEND_URL}/documents/${id}/content`, {
+    headers: { ...authHeaders() },
+  });
+  if (!res.ok) throw new Error(`Failed to load notes: ${res.status}`);
+  return res.text(); // plain text, not .json()
+},
+
+async saveNotesContent(id, content) {
     if (MOCK_MODE) {
       await wait(160);
       _notesContent[id] = content;
@@ -235,7 +259,10 @@ export const Documents = {
       if (d) d.current_version += 1;
       return { saved: true, new_version: d?.current_version };
     }
-    return realFetch(`/documents/${id}/content`, { method: 'PUT', body: JSON.stringify({ content }) });
+    return realFetch(`/documents/${id}/content`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    });
   },
 };
 
