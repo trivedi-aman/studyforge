@@ -1,1 +1,61 @@
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Important private data
+# =========================
+imp-data.md
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# =========================
+# Node / Frontend
+# =========================
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# macOS
+# =========================
 .DS_Store
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Coverage
+# =========================
+.coverage
+htmlcov/
