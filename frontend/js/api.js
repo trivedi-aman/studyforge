@@ -341,10 +341,66 @@ export const AI = {
     if (MOCK_MODE) { await wait(750); return { summary: "This document covers the core mechanics of the topic, walks through a worked example, and closes with common pitfalls to watch for when applying it in practice." }; }
     return realFetch('/ai/summarize', { method: 'POST', body: JSON.stringify({ document_id: documentId }) });
   },
+
   async explainSelection(documentId, selectedText) {
-    if (MOCK_MODE) { await wait(650); return { explanation: `In plain terms: "${selectedText.slice(0, 40)}${selectedText.length > 40 ? '…' : ''}" is describing a mechanism the rest of the document builds on — it's worth re-reading the paragraph right before this if it's still unclear.` }; }
-    return realFetch('/ai/explain', { method: 'POST', body: JSON.stringify({ document_id: documentId, text: selectedText }) });
+    if (MOCK_MODE) {
+      await wait(650);
+
+      return {
+        explanation: `In plain terms: "${selectedText.slice(0, 40)}${selectedText.length > 40 ? '…' : ''}" is describing a mechanism the rest of the document builds on — it's worth re-reading the paragraph right before this if it's still unclear.`
+      };
+    }
+
+    return realFetch('/ai/explain', {
+      method: 'POST',
+      body: JSON.stringify({
+        document_id: documentId,
+        text: selectedText
+      })
+    });
   },
+
+
+  // ============================================================
+  // A* STUDY PATH
+  // ============================================================
+
+  async studyPath(start, goal, graph, positions = {}) {
+
+    if (MOCK_MODE) {
+      await wait(500);
+
+      return {
+        path: [
+          start,
+          "Random Variables",
+          "Probability Distributions",
+          "Hypothesis Testing",
+          goal
+        ],
+        cost: 5,
+        algorithm: "A*",
+        nodes_explored: 5,
+        message: null
+      };
+    }
+
+    return realFetch('/ai/study-path', {
+      method: 'POST',
+      body: JSON.stringify({
+        start,
+        goal,
+        graph,
+        positions
+      })
+    });
+  },
+
+
+  // ---- Async jobs
+
+
+
   // ---- Async jobs (polling pattern per README Section 7 / 9) ----
   async startYoutubeToNotes(youtubeUrl, targetFolderId) {
     if (MOCK_MODE) {

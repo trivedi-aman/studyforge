@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import embed, chat, jobs
+from routers import embed, chat, jobs, study_path
 
 app = FastAPI(
     title="Studyforge AI Service",
@@ -18,6 +18,7 @@ app.add_middleware(
 app.include_router(embed.router)
 app.include_router(chat.router)
 app.include_router(jobs.router)
+app.include_router(study_path.router)
 
 
 @app.get("/health")

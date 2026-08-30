@@ -11,6 +11,7 @@ import { Icon } from './icons.js';
 import { escapeHtml, formatDate } from './ui-helpers.js';
 import { toast } from './toast.js';
 import { pollJob } from './jobs.js';
+import { openModal } from './ui-helpers.js';
 
 let panelEl;
 const embeddedDocs = new Set();
@@ -69,19 +70,98 @@ export function closeAiPanel() {
 }
 
 function renderActionsBar(doc) {
-  const bar = panelEl.querySelector('#ai-actions-bar');
+
+  const bar =
+    panelEl.querySelector(
+      '#ai-actions-bar'
+    );
+
   if (!bar) return;
+
   bar.innerHTML = `
-    <div class="ai-actions" style="padding: 12px 16px 0 16px;">
-      <button class="ai-action" data-action="chat">${Icon.chatBubble}<span class="ai-action__label">Ask AI</span></button>
-      <button class="ai-action" data-action="summarize">${Icon.summarize}<span class="ai-action__label">Summarize</span></button>
-      <button class="ai-action" data-action="explain">${Icon.explain}<span class="ai-action__label">Explain selection</span></button>
-      <button class="ai-action" data-action="generate-notes">${Icon.generate}<span class="ai-action__label">Generate notes</span></button>
+
+    <div
+      class="ai-actions"
+      style="padding: 12px 16px 0 16px;"
+    >
+
+      <button
+        class="ai-action"
+        data-action="chat"
+      >
+        ${Icon.chatBubble}
+
+        <span class="ai-action__label">
+          Ask AI
+        </span>
+      </button>
+
+
+      <button
+        class="ai-action"
+        data-action="summarize"
+      >
+        ${Icon.summarize}
+
+        <span class="ai-action__label">
+          Summarize
+        </span>
+      </button>
+
+
+      <button
+        class="ai-action"
+        data-action="explain"
+      >
+        ${Icon.explain}
+
+        <span class="ai-action__label">
+          Explain selection
+        </span>
+      </button>
+
+
+      <button
+        class="ai-action"
+        data-action="generate-notes"
+      >
+        ${Icon.generate}
+
+        <span class="ai-action__label">
+          Generate notes
+        </span>
+      </button>
+
+
+      <button
+        class="ai-action"
+        data-action="study-path"
+      >
+        ${Icon.sparkles}
+
+        <span class="ai-action__label">
+          Study path
+        </span>
+      </button>
+
     </div>
   `;
-  bar.querySelectorAll('.ai-action').forEach((btn) => {
-    btn.addEventListener('click', () => handleAction(doc, btn.dataset.action));
-  });
+
+
+  bar
+    .querySelectorAll('.ai-action')
+    .forEach((btn) => {
+
+      btn.addEventListener(
+        'click',
+        () =>
+          handleAction(
+            doc,
+            btn.dataset.action
+          )
+      );
+
+    });
 }
 
 function renderThread(doc) {
@@ -179,26 +259,78 @@ async function ensureEmbedded(doc) {
 }
 
 async function handleAction(doc, action) {
+
   if (action === 'chat') {
-    const session = state.chatSessions[doc.id];
-    session.messages.push({ role: 'assistant', content: "I'm ready — ask me anything about this document below." });
-    renderThread(doc);
-  } else if (action === 'summarize') {
-    await runWithTyping(doc, async () => {
-      await ensureEmbedded(doc);
-      const { summary } = await AI.summarize(doc.id);
-      return summary;
+
+    const session =
+      state.chatSessions[doc.id];
+
+    session.messages.push({
+      role: 'assistant',
+
+      content:
+        "I'm ready — ask me anything about this document below.",
     });
-  } else if (action === 'explain') {
-    // Selection-based — prompt user to select first
-    const currentSelection = window.getSelection()?.toString().trim();
-    if (currentSelection && currentSelection.length > 3) {
-      runExplain(doc, currentSelection);
+
+    renderThread(doc);
+
+  }
+
+  else if (action === 'summarize') {
+
+    await runWithTyping(
+      doc,
+      async () => {
+
+        await ensureEmbedded(doc);
+
+        const { summary } =
+          await AI.summarize(doc.id);
+
+        return summary;
+      }
+    );
+
+  }
+
+  else if (action === 'explain') {
+
+    const currentSelection =
+      window
+        .getSelection()
+        ?.toString()
+        .trim();
+
+    if (
+      currentSelection &&
+      currentSelection.length > 3
+    ) {
+
+      runExplain(
+        doc,
+        currentSelection
+      );
+
     } else {
-      toast('Select some text in the document first, then click Explain', 'info', 4000);
+
+      toast(
+        'Select some text in the document first, then click Explain',
+        'info',
+        4000
+      );
     }
-  } else if (action === 'generate-notes') {
+
+  }
+
+  else if (action === 'generate-notes') {
+
     startGenerateNotesJob(doc);
+
+  }
+
+  else if (action === 'study-path') {
+
+    openStudyPathModal(doc);
   }
 }
 
@@ -265,4 +397,523 @@ async function startGenerateNotesJob(doc) {
     jobMsg.error = e.message || 'Failed to start job.';
     renderThread(doc);
   }
+}
+
+
+
+// ============================================================
+// STUDY PATH — A*
+// ============================================================
+
+function openStudyPathModal(doc) {
+
+  const existing =
+    document.getElementById(
+      'study-path-modal'
+    );
+
+  if (existing) {
+    existing.remove();
+  }
+
+
+  const modal =
+    document.createElement('div');
+
+  modal.id =
+    'study-path-modal';
+
+  modal.className =
+    'study-path-modal';
+
+
+  modal.innerHTML = `
+
+    <div class="study-path-modal__backdrop"></div>
+
+
+    <div class="study-path-modal__card">
+
+      <div class="study-path-modal__header">
+
+        <div>
+
+          <div class="study-path-modal__eyebrow">
+            AI STUDY PLANNER
+          </div>
+
+          <h2>
+            Find a study path
+          </h2>
+
+          <p>
+            A* will find the lowest-cost path
+            between two topics.
+          </p>
+
+        </div>
+
+
+        <button
+          class="icon-btn"
+          id="study-path-close"
+        >
+          ${Icon.close}
+        </button>
+
+      </div>
+
+
+      <div class="study-path-form">
+
+        <div class="field">
+
+          <label
+            class="field__label"
+            for="study-path-start"
+          >
+            Start topic
+          </label>
+
+          <input
+            class="input"
+            id="study-path-start"
+            type="text"
+            value="Probability"
+            placeholder="e.g. Probability"
+          />
+
+        </div>
+
+
+        <div class="study-path-arrow">
+          ↓
+        </div>
+
+
+        <div class="field">
+
+          <label
+            class="field__label"
+            for="study-path-goal"
+          >
+            Target topic
+          </label>
+
+          <input
+            class="input"
+            id="study-path-goal"
+            type="text"
+            value="Regression"
+            placeholder="e.g. Regression"
+          />
+
+        </div>
+
+
+        <button
+          class="btn btn--accent btn--block"
+          id="study-path-run"
+          style="margin-top: 8px;"
+        >
+          ${Icon.sparkles}
+          Find optimal path
+        </button>
+
+      </div>
+
+
+      <div
+        id="study-path-result"
+        class="study-path-result"
+      ></div>
+
+    </div>
+  `;
+
+
+  document.body.appendChild(modal);
+
+
+  const close = () => {
+    modal.remove();
+  };
+
+
+  modal
+    .querySelector(
+      '#study-path-close'
+    )
+    .addEventListener(
+      'click',
+      close
+    );
+
+
+  modal
+    .querySelector(
+      '.study-path-modal__backdrop'
+    )
+    .addEventListener(
+      'click',
+      close
+    );
+
+
+  modal
+    .querySelector(
+      '#study-path-run'
+    )
+    .addEventListener(
+      'click',
+      async () => {
+
+        const start =
+          modal
+            .querySelector(
+              '#study-path-start'
+            )
+            .value
+            .trim();
+
+        const goal =
+          modal
+            .querySelector(
+              '#study-path-goal'
+            )
+            .value
+            .trim();
+
+
+        if (!start || !goal) {
+
+          toast(
+            'Enter both a starting and target topic.',
+            'info',
+            3000
+          );
+
+          return;
+        }
+
+
+        await runStudyPath(
+          modal,
+          start,
+          goal
+        );
+      }
+    );
+}
+
+
+async function runStudyPath(
+  modal,
+  start,
+  goal
+) {
+
+  const button =
+    modal.querySelector(
+      '#study-path-run'
+    );
+
+  const result =
+    modal.querySelector(
+      '#study-path-result'
+    );
+
+
+  button.disabled = true;
+
+  button.innerHTML = `
+    <span class="study-path-spinner"></span>
+    Searching with A*…
+  `;
+
+
+  result.innerHTML = '';
+
+
+  /*
+   * TEMPORARY GRAPH
+   *
+   * This is intentionally hardcoded.
+   *
+   * Later we will replace this with:
+   *
+   * Document / syllabus
+   *       ↓
+   * Topic extraction
+   *       ↓
+   * Prerequisite graph
+   *       ↓
+   * A*
+   */
+
+  const graph = {
+
+    "Probability": [
+      [
+        "Random Variables",
+        1
+      ]
+    ],
+
+    "Random Variables": [
+      [
+        "Probability Distributions",
+        1
+      ]
+    ],
+
+    "Probability Distributions": [
+
+      [
+        "Hypothesis Testing",
+        2
+      ],
+
+      [
+        "Regression",
+        5
+      ]
+
+    ],
+
+    "Hypothesis Testing": [
+      [
+        "Regression",
+        1
+      ]
+    ],
+
+    "Regression": [],
+
+  };
+
+
+  const positions = {
+
+    "Probability":
+      [0, 0],
+
+    "Random Variables":
+      [1, 0],
+
+    "Probability Distributions":
+      [2, 0],
+
+    "Hypothesis Testing":
+      [3, 1],
+
+    "Regression":
+      [4, 1],
+
+  };
+
+
+  try {
+
+    const response =
+      await AI.studyPath(
+        start,
+        goal,
+        graph,
+        positions
+      );
+
+
+    renderStudyPathResult(
+      result,
+      response
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      'Study path failed:',
+      error
+    );
+
+
+    result.innerHTML = `
+
+      <div class="study-path-error">
+
+        <div class="study-path-error__icon">
+          !
+        </div>
+
+        <div>
+
+          <strong>
+            Couldn't generate a study path
+          </strong>
+
+          <p>
+            ${
+              escapeHtml(
+                error.message ||
+                'Something went wrong.'
+              )
+            }
+          </p>
+
+        </div>
+
+      </div>
+
+    `;
+
+  } finally {
+
+    button.disabled = false;
+
+    button.innerHTML = `
+      ${Icon.sparkles}
+      Find optimal path
+    `;
+  }
+}
+
+
+function renderStudyPathResult(
+  container,
+  result
+) {
+
+  if (
+    !result.path ||
+    result.path.length === 0
+  ) {
+
+    container.innerHTML = `
+
+      <div class="study-path-empty">
+
+        <div class="study-path-empty__icon">
+          ∅
+        </div>
+
+        <strong>
+          No path found
+        </strong>
+
+        <p>
+          There is no connected learning path
+          between these topics.
+        </p>
+
+      </div>
+    `;
+
+    return;
+  }
+
+
+  const steps =
+    result.path
+      .map(
+        (topic, index) => `
+
+          <div class="study-path-step">
+
+            <div class="study-path-step__number">
+              ${index + 1}
+            </div>
+
+            <div class="study-path-step__topic">
+              ${escapeHtml(topic)}
+            </div>
+
+            ${
+              index <
+              result.path.length - 1
+                ? `
+                  <div class="study-path-step__line"></div>
+                `
+                : ''
+            }
+
+          </div>
+
+        `
+      )
+      .join('');
+
+
+  container.innerHTML = `
+
+    <div class="study-path-success">
+
+      <div class="study-path-result__header">
+
+        <div>
+
+          <div class="study-path-result__eyebrow">
+            OPTIMAL LEARNING PATH
+          </div>
+
+          <h3>
+            ${escapeHtml(result.path[0])}
+            <span>→</span>
+            ${escapeHtml(
+              result.path[
+                result.path.length - 1
+              ]
+            )}
+          </h3>
+
+        </div>
+
+
+        <div class="study-path-badge">
+          A*
+        </div>
+
+      </div>
+
+
+      <div class="study-path-steps">
+
+        ${steps}
+
+      </div>
+
+
+      <div class="study-path-stats">
+
+        <div>
+          <span>PATH COST</span>
+          <strong>
+            ${result.cost ?? '—'}
+          </strong>
+        </div>
+
+
+        <div>
+          <span>NODES EXPLORED</span>
+          <strong>
+            ${result.nodes_explored ?? '—'}
+          </strong>
+        </div>
+
+
+        <div>
+          <span>ALGORITHM</span>
+          <strong>
+            ${escapeHtml(
+              result.algorithm ||
+              'A*'
+            )}
+          </strong>
+        </div>
+
+      </div>
+
+    </div>
+
+  `;
 }

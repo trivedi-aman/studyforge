@@ -9,10 +9,10 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 # Model allocation (README Section 7.5)
-MODEL_SUMMARIZATION = "llama-3.3-70b-versatile"
-MODEL_STRUCTURED = "llama-3.1-8b-instant"
-MODEL_RAG = "llama-3.3-70b-versatile"
-MODEL_LIGHT = "llama-3.1-8b-instant"
+MODEL_SUMMARIZATION = "openai/gpt-oss-120b"
+MODEL_STRUCTURED = "openai/gpt-oss-20b"
+MODEL_RAG = "openai/gpt-oss-120b"
+MODEL_LIGHT = "openai/gpt-oss-20b"
 
 _clients: dict[str, Groq] = {}
 

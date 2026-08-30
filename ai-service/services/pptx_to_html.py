@@ -1,3 +1,4 @@
+# ai-service/services/pptx_to_html.py
 """
 PPTX → HTML preview.
 Strategy: render slides at their NATIVE pixel size (positions/sizes/fonts all
@@ -22,21 +23,12 @@ def pptx_to_html(file_bytes: bytes) -> str:
     slide_w_emu = prs.slide_width or Emu(9144000)
     slide_h_emu = prs.slide_height or Emu(6858000)
 
-    # EMU → pixels at 96 DPI (1 inch = 914400 EMU = 96 px, so 1 EMU = 96/914400)
     slide_w_px = slide_w_emu * 96 / 914400
     slide_h_px = slide_h_emu * 96 / 914400
 
     slides_html = []
     for idx, slide in enumerate(prs.slides, 1):
-        bg_style = "background:#ffffff;"
-        try:
-            bg = slide.background
-            if bg and bg.fill and bg.fill.type is not None:
-                fc = bg.fill.fore_color
-                if fc and fc.rgb:
-                    bg_style = f"background:#{fc.rgb};"
-        except Exception:
-            pass
+        bg_style = _get_slide_bg_style(slide)
 
         parts = []
         for shape in slide.shapes:
@@ -59,11 +51,40 @@ def pptx_to_html(file_bytes: bytes) -> str:
     return _wrap_html(body, slide_w_px, slide_h_px)
 
 
+def _get_slide_bg_style(slide) -> str:
+    """
+    Robustly extract the slide background color set by ppt_renderer._set_bg().
+    Falls back to white if anything goes wrong.
+    """
+    try:
+        bg = slide.background
+        fill = bg.fill
+        if fill.type is None:
+            return "background:#ffffff;"
+        rgb = fill.fore_color.rgb
+        return f"background:#{rgb};"
+    except Exception as e:
+        logger.debug(f"Slide bg extraction failed: {e}")
+        return "background:#ffffff;"
+
+
+def _get_shape_fill_style(shape) -> str:
+    """Robustly extract shape fill color as a CSS style string."""
+    try:
+        if not hasattr(shape, "fill") or shape.fill is None:
+            return ""
+        if shape.fill.type is None:
+            return ""
+        rgb = shape.fill.fore_color.rgb
+        return f"background-color:#{rgb};"
+    except Exception:
+        return ""
+
+
 def _render_shape(shape, sw_emu, sh_emu, sw_px, sh_px):
     if not hasattr(shape, "left") or shape.left is None:
         return ""
 
-    # Convert EMU positions/sizes to pixels
     left_px = shape.left * 96 / 914400
     top_px = shape.top * 96 / 914400
     w_px = shape.width * 96 / 914400
@@ -71,14 +92,7 @@ def _render_shape(shape, sw_emu, sh_emu, sw_px, sh_px):
 
     pos = f"left:{left_px:.1f}px;top:{top_px:.1f}px;width:{w_px:.1f}px;height:{h_px:.1f}px;"
 
-    fill_style = ""
-    try:
-        if hasattr(shape, "fill") and shape.fill and shape.fill.type is not None:
-            fc = shape.fill.fore_color
-            if fc and fc.rgb:
-                fill_style = f"background-color:#{fc.rgb};"
-    except Exception:
-        pass
+    fill_style = _get_shape_fill_style(shape)
 
     # Picture
     if shape.shape_type == 13:
@@ -114,7 +128,6 @@ def _text_frame_html(tf):
                 continue
             styles = []
 
-            # Font size in pixels (1 pt = 1.333 px at 96 DPI)
             pt_size = run.font.size.pt if run.font.size else 18
             px_size = pt_size * 1.333
             styles.append(f"font-size:{px_size:.1f}px")
@@ -178,7 +191,6 @@ body {{
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }}
-/* Scaler wraps the native-sized slide and scales it down to fit the container */
 .slide-scaler {{
   width: 100%;
   aspect-ratio: {slide_w_px:.0f} / {slide_h_px:.0f};
@@ -192,7 +204,6 @@ body {{
   top: 0;
   left: 0;
   transform-origin: top left;
-  /* JS below sets transform: scale() based on container width */
 }}
 .shape {{
   position: absolute;
@@ -217,7 +228,6 @@ body {{
 <body>
 {body}
 <script>
-// Scale each slide to fit its container width
 function scaleSlides() {{
   const NATIVE_W = {slide_w_px:.0f};
   document.querySelectorAll('.slide-scaler').forEach(scaler => {{
@@ -229,7 +239,6 @@ function scaleSlides() {{
 }}
 scaleSlides();
 window.addEventListener('resize', scaleSlides);
-// Rescale after fonts load (font sizes affect nothing here, but just in case)
 if (document.fonts) {{
   document.fonts.ready.then(scaleSlides);
 }}

@@ -84,7 +84,17 @@ TEMPLATES = {
 
 
 def render_pptx(outline: dict, template_id: str, font_name: str = "Calibri") -> bytes:
-    tpl = TEMPLATES.get(template_id, TEMPLATES["modern"])
+    # Normalize to avoid silent mismatches (e.g. "Modern", " dark ", "DARK")
+    normalized_id = (template_id or "modern").strip().lower()
+    tpl = TEMPLATES.get(normalized_id)
+    if tpl is None:
+        logger.warning(
+            f"Unknown template '{template_id}' (normalized: '{normalized_id}'), "
+            f"available keys: {list(TEMPLATES.keys())}. Falling back to 'modern'."
+        )
+        tpl = TEMPLATES["modern"]
+
+    logger.info(f"render_pptx: template='{normalized_id}', font='{font_name}', slides={len(outline.get('slides', []))}")
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -107,6 +117,8 @@ def render_pptx(outline: dict, template_id: str, font_name: str = "Calibri") -> 
     buf.seek(0)
     return buf.read()
 
+
+# --- all functions below are UNCHANGED ---
 
 def _set_bg(slide, color):
     """Set solid background color on a slide."""
@@ -186,7 +198,6 @@ def _layout_standard(slide, heading, bullets, tpl, font_name):
     """Standard: heading top, accent line, bullets below."""
     from pptx.enum.shapes import MSO_SHAPE
 
-    # Small accent oval in corner
     corner = slide.shapes.add_shape(
         MSO_SHAPE.OVAL, Inches(12.5), Inches(0.4), Inches(0.35), Inches(0.35)
     )
@@ -194,7 +205,6 @@ def _layout_standard(slide, heading, bullets, tpl, font_name):
     corner.fill.fore_color.rgb = tpl["accent"]
     corner.line.fill.background()
 
-    # Heading
     hb = slide.shapes.add_textbox(Inches(0.7), Inches(0.5), Inches(11.6), Inches(1.1))
     tf = hb.text_frame
     tf.word_wrap = True
@@ -205,7 +215,6 @@ def _layout_standard(slide, heading, bullets, tpl, font_name):
     run.font.bold = True
     run.font.color.rgb = tpl["title_color"]
 
-    # Accent underline
     line = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, Inches(0.7), Inches(1.65), Inches(1.4), Inches(0.06)
     )
@@ -213,7 +222,6 @@ def _layout_standard(slide, heading, bullets, tpl, font_name):
     line.fill.fore_color.rgb = tpl["accent"]
     line.line.fill.background()
 
-    # Bullets
     _draw_bullets(slide, bullets, tpl, font_name, x=Inches(0.7), y=Inches(2.0), w=Inches(11.9))
 
 
@@ -221,7 +229,6 @@ def _layout_sidebar(slide, heading, bullets, tpl, font_name):
     """Sidebar layout: colored strip on left with decorative icon, content on right."""
     from pptx.enum.shapes import MSO_SHAPE
 
-    # Left sidebar
     sidebar = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(2.5), Inches(7.5)
     )
@@ -229,7 +236,6 @@ def _layout_sidebar(slide, heading, bullets, tpl, font_name):
     sidebar.fill.fore_color.rgb = tpl["accent"]
     sidebar.line.fill.background()
 
-    # Decorative symbol on sidebar
     num_box = slide.shapes.add_textbox(Inches(0.3), Inches(2.8), Inches(2), Inches(2))
     num_tf = num_box.text_frame
     num_p = num_tf.paragraphs[0]
@@ -240,7 +246,6 @@ def _layout_sidebar(slide, heading, bullets, tpl, font_name):
     num_run.font.size = Pt(80)
     num_run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
-    # Heading on right
     hb = slide.shapes.add_textbox(Inches(3), Inches(0.7), Inches(9.7), Inches(1.3))
     htf = hb.text_frame
     htf.word_wrap = True
@@ -251,7 +256,6 @@ def _layout_sidebar(slide, heading, bullets, tpl, font_name):
     hrun.font.bold = True
     hrun.font.color.rgb = tpl["title_color"]
 
-    # Bullets on right
     _draw_bullets(slide, bullets, tpl, font_name, x=Inches(3), y=Inches(2.1), w=Inches(9.7))
 
 
@@ -259,7 +263,6 @@ def _layout_centered(slide, heading, bullets, tpl, font_name):
     """Centered emphasis: big heading at top-center, bullets stacked below."""
     from pptx.enum.shapes import MSO_SHAPE
 
-    # Top accent bar (short, centered)
     bar = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, Inches(5.9), Inches(0.6), Inches(1.5), Inches(0.08)
     )
@@ -267,7 +270,6 @@ def _layout_centered(slide, heading, bullets, tpl, font_name):
     bar.fill.fore_color.rgb = tpl["accent"]
     bar.line.fill.background()
 
-    # Centered heading
     hb = slide.shapes.add_textbox(Inches(1), Inches(1.0), Inches(11.3), Inches(1.4))
     htf = hb.text_frame
     htf.word_wrap = True
@@ -280,7 +282,6 @@ def _layout_centered(slide, heading, bullets, tpl, font_name):
     hrun.font.bold = True
     hrun.font.color.rgb = tpl["title_color"]
 
-    # Bullets
     _draw_bullets(slide, bullets, tpl, font_name, x=Inches(1.5), y=Inches(2.8), w=Inches(10.3))
 
 
@@ -297,7 +298,6 @@ def _draw_bullets(slide, bullets, tpl, font_name, x, y, w):
             p = body_tf.add_paragraph()
         p.space_after = Pt(14)
 
-        # Bullet marker in accent color
         marker = p.add_run()
         marker.text = "●  "
         marker.font.name = font_name
@@ -305,7 +305,6 @@ def _draw_bullets(slide, bullets, tpl, font_name, x, y, w):
         marker.font.color.rgb = tpl["accent"]
         marker.font.bold = True
 
-        # Bullet text
         text_run = p.add_run()
         text_run.text = str(bullet)
         text_run.font.name = font_name
