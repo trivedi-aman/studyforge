@@ -1,6 +1,6 @@
 from groq import Groq
 
-client = Groq(api_key="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")
+client = Groq(api_key=os.environ["GROQ_API_KEY_LIGHT"])
 
 models = client.models.list()
 
