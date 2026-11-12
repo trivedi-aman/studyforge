@@ -1,12 +1,5 @@
 import requests
 
-API_KEYS = [
-    "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",
-    "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",
-    "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",
-    "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",
-]
-
 MODEL = "openai/gpt-oss-120b"
 
 for i, key in enumerate(API_KEYS, 1):
