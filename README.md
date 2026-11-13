@@ -1,4 +1,16 @@
-# Studyforge — Frontend
+# StudyForge
+
+Document platform with RAG chat, YouTube-to-notes and text-to-slides.
+
+| Folder | What it is |
+| --- | --- |
+| `frontend/` | Web app (this README) |
+| `backend/` | Main API: folders, files, auth, versions |
+| `ai-service/` | AI microservice: notes, slides, RAG chat |
+
+The full design and the AI service contract are in [functional_readme.md](functional_readme.md).
+
+## Frontend
 
 Vanilla HTML/CSS/JS (ES modules, no framework, no build step) — matches the main project README's tech stack decision.
 
@@ -12,7 +24,7 @@ cd frontend
 python3 -m http.server 5500
 
 # or Node, if you have it
-npx serve .
+npx serve -l 5500 .
 ```
 
 Then open `http://localhost:5500`. Any signup/login "works" immediately — it's mock auth, no real backend needed yet (see below).
